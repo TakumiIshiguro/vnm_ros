@@ -1,0 +1,9 @@
+image_topic: /camera_center/image_raw
+waypoint_topic: /waypoint
+cmd_vel_topic: /cmd_vel
+cmd_vel_debug_topic: /vnm/cmd_vel_debug
+reached_goal_topic: /vnm/reached_goal
+marker_topic: /vnm/waypoint_marker
+topomap_image_topic: /vnm/topomap_image
+annotated_image_topic: /vnm/annotated_image
+frame_id: base_link

@@ -1,0 +1,21 @@
+<launch>
+  <arg name="config_dir" default="$(find vnm_ros)/config"/>
+  <arg name="topomap_name" default="topomap"/>
+  <arg name="checkpoint" default="$(find vnm_ros)/weights/vint.pth"/>
+  <arg name="publish_cmd_vel" default="false"/>
+  <arg name="show_image" default="true"/>
+  <arg name="annotated_image_topic" default="/vnm/annotated_image"/>
+
+  <node pkg="vnm_ros" type="vnm_node.py" name="vnm_test_model" output="screen"
+        args="--config-dir $(arg config_dir) --topomap-name $(arg topomap_name) --checkpoint $(arg checkpoint)">
+    <param name="publish_cmd_vel" value="$(arg publish_cmd_vel)"/>
+  </node>
+
+  <node if="$(arg show_image)" pkg="vnm_ros" type="overlay_view.py"
+        name="vnm_overlay_view" output="screen"
+        args="--config-dir $(arg config_dir)"/>
+
+  <node if="$(arg show_image)" pkg="rqt_image_view" type="rqt_image_view"
+        name="vnm_camera_view" output="screen"
+        args="$(arg annotated_image_topic)"/>
+</launch>

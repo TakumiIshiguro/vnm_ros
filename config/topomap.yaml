@@ -1,0 +1,8 @@
+topomap_dir: topomaps/topomap
+goal_node: -1
+search_radius: 4
+close_threshold: 3
+sample_dt: 1.0
+overwrite: true
+shutdown_on_stale_image: true
+

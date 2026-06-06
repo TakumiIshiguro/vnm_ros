@@ -1,0 +1,8 @@
+control_rate: 10.0
+model_rate: 4.0
+max_v: 0.2
+max_w: 0.4
+publish_cmd_vel: true
+publish_waypoint: true
+waypoint_timeout: 1.0
+

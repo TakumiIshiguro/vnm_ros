@@ -1,0 +1,12 @@
+# Model checkpoints
+/weights/*
+!/weights/README.md
+
+# Generated topological maps and recorded bags
+/topomaps/*
+!/topomaps/README.md
+
+# Python generated files
+__pycache__/
+*.py[cod]
+
