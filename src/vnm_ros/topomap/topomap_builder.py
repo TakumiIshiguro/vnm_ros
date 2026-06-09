@@ -16,12 +16,11 @@ class TopomapBuilder:
             shutil.rmtree(self.output_dir)
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def maybe_save(self, image) -> bool:
-        now = time.time()
+    def maybe_save(self, image, stamp: float = None) -> bool:
+        now = time.time() if stamp is None else stamp
         if now - self.last_saved_time < self.dt:
             return False
         image.save(os.path.join(self.output_dir, f"{self.index}.png"))
         self.index += 1
         self.last_saved_time = now
         return True
-

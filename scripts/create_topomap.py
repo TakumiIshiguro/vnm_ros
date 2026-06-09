@@ -18,6 +18,21 @@ latest_image = None
 latest_time = float("-inf")
 
 
+def optional_path(path):
+    if not path:
+        return None
+    return resolve_path(path, package_root())
+
+
+def stamp_to_sec(msg, bag_time):
+    stamp = getattr(getattr(msg, "header", None), "stamp", None)
+    if stamp is not None:
+        stamp_sec = stamp.to_sec()
+        if stamp_sec > 0.0:
+            return stamp_sec
+    return bag_time.to_sec()
+
+
 def image_callback(msg: Image):
     global latest_image, latest_time
     latest_image = msg_to_pil(msg)
@@ -29,6 +44,7 @@ def main():
     parser.add_argument("--config-dir", default=None)
     parser.add_argument("--topomap-name", default=None)
     parser.add_argument("--dt", type=float, default=None)
+    parser.add_argument("--bag-path", default=None)
     args = parser.parse_args(rospy.myargv()[1:])
 
     rospy.init_node("vnm_create_topomap")
@@ -41,6 +57,7 @@ def main():
         topomap_dir = os.path.join("topomaps", topomap_dir)
     output_dir = resolve_path(topomap_dir, package_root())
     dt = args.dt if args.dt is not None else float(topomap_cfg["sample_dt"])
+    bag_path = optional_path(args.bag_path) or optional_path(topomap_cfg.get("bag_path", ""))
 
     builder = TopomapBuilder(
         output_dir=output_dir,
@@ -48,6 +65,19 @@ def main():
         overwrite=bool(topomap_cfg.get("overwrite", True)),
     )
     builder.prepare()
+
+    if bag_path:
+        import rosbag
+
+        image_topic = topics["image_topic"]
+        info(f"saving topomap to {output_dir} from bag {bag_path}")
+        with rosbag.Bag(bag_path, "r") as bag:
+            for _, msg, bag_time in bag.read_messages(topics=[image_topic]):
+                image = msg_to_pil(msg)
+                if builder.maybe_save(image, stamp_to_sec(msg, bag_time)):
+                    info(f"saved topomap image {builder.index - 1}")
+        info(f"saved {builder.index} topomap images to {output_dir}")
+        return
 
     rospy.Subscriber(topics["image_topic"], Image, image_callback, queue_size=1)
     # Run faster than the requested sampling interval so timing jitter around
