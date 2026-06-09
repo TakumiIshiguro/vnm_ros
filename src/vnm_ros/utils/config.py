@@ -25,9 +25,13 @@ def resolve_path(path: str, base_dir: str = None) -> str:
 def load_runtime_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
     if config_dir is None:
         config_dir = os.path.join(package_root(), "config")
-    return {
+    config = {
         "topics": load_yaml(os.path.join(config_dir, "topics.yaml")),
         "robot": load_yaml(os.path.join(config_dir, "robot.yaml")),
         "model": load_yaml(os.path.join(config_dir, "model.yaml")),
         "topomap": load_yaml(os.path.join(config_dir, "topomap.yaml")),
     }
+    train_path = os.path.join(config_dir, "train.yaml")
+    if os.path.isfile(train_path):
+        config["train"] = load_yaml(train_path)
+    return config

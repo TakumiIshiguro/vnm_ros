@@ -1,0 +1,40 @@
+run_name: my_vint
+seed: 0
+device: auto
+
+dataset:
+  name: my_dataset
+  train_data_dir: dataset/my_dataset/train
+  test_data_dir: dataset/my_dataset/test
+  image_size: [85, 64]
+  metric_waypoint_spacing: 0.2
+  waypoint_spacing: 1
+  context_size: 5
+  len_traj_pred: 5
+  min_goal_distance: 1
+  max_goal_distance: 20
+  min_action_distance: 0
+  max_action_distance: 10
+  normalize: true
+  learn_angle: true
+  negative_mining: true
+
+collection:
+  bag_path: ""
+  train_bag_path: ""
+  test_bag_path: ""
+  sample_dt: 0.25
+  image_format: jpg
+
+training:
+  use_test: false
+  tensorboard: true
+  epochs: 100
+  batch_size: 64
+  num_workers: 4
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  alpha: 0.5
+  gradient_clip: 1.0
+  scheduler: cosine
+  resume: ""

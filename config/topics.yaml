@@ -1,4 +1,5 @@
 image_topic: /camera_center/image_raw
+odometry_topic: /odom
 waypoint_topic: /waypoint
 cmd_vel_topic: /cmd_vel
 cmd_vel_debug_topic: /vnm/cmd_vel_debug

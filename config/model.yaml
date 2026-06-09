@@ -1,5 +1,5 @@
 model_name: vint
-checkpoint_path: weights/vint.pth
+checkpoint_path: weights/best.pth
 device: auto
 
 model_type: vint

@@ -6,7 +6,10 @@
 /topomaps/*
 !/topomaps/README.md
 
+# Generated datasets and training runs
+/dataset/
+/runs/
+
 # Python generated files
 __pycache__/
 *.py[cod]
-
