@@ -1,8 +1,7 @@
 topomap_dir: topomaps/topomap
-bag_path: ""
+bag_path: "/home/takumi/bags/sim_dataset.bag"
 goal_node: -1
 search_radius: 4
 close_threshold: 3
 sample_dt: 3.0
 overwrite: true
-shutdown_on_stale_image: true

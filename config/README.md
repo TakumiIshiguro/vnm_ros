@@ -51,6 +51,7 @@ Waypointから速度指令を生成するときの設定です。
 | --- | --- |
 | `image_topic` | 推論、Topomap作成、Dataset作成に使うカメラ画像です。型は `sensor_msgs/Image` です。 |
 | `odometry_topic` | Datasetへ位置とyawを保存するためのオドメトリです。型は `nav_msgs/Odometry` です。 |
+| `amcl_pose_topic` | Datasetへ位置とyawを保存するためのAMCL自己位置です。型は `geometry_msgs/PoseWithCovarianceStamped` です。 |
 | `waypoint_topic` | 選択したWaypointの配信先です。 |
 | `cmd_vel_topic` | ロボットへ送る速度指令の配信先です。型は `geometry_msgs/Twist` です。 |
 | `cmd_vel_debug_topic` | 実際の速度出力が無効でも配信される可視化用速度指令です。 |
@@ -67,13 +68,12 @@ Topomapの作成とTopomap上のナビゲーションを設定します。
 | パラメータ | 意味 |
 | --- | --- |
 | `topomap_dir` | Topomap画像の保存・読込先です。例: `topomaps/topomap`。 |
-| `bag_path` | Topomap作成に使うrosbagです。空文字の場合はライブの `image_topic` を購読します。 |
+| `bag_path` | Topomap作成に使うrosbagです。必須です。 |
 | `goal_node` | ゴールとするTopomapノード番号です。`-1` は最後のノードを意味します。 |
 | `search_radius` | 現在位置として保持しているノードの前後何ノードを照合対象にするかを指定します。大きいほど探索範囲と計算量が増えます。 |
 | `close_threshold` | モデルが予測した目標画像までの距離がこの値以下なら、そのノードへ十分近いと判断して次のノードへ進めます。単位はモデルが学習したノード間隔です。 |
 | `sample_dt` | Topomap画像を保存する時間間隔 `[s]` です。 |
 | `overwrite` | `true` の場合、作成開始時に既存のTopomapディレクトリを削除して作り直します。 |
-| `shutdown_on_stale_image` | ライブ作成中に画像が `2 * sample_dt` 秒以上届かなければ、ノードを終了するかを指定します。rosbag直接読込時には使いません。 |
 
 ## train.yaml
 
@@ -109,18 +109,15 @@ Dataset作成、ViNT学習、評価を設定します。
 
 ### collection
 
-bagパスの優先順位は、`train_bag_path` または `test_bag_path`、
-共通の `bag_path` の順です。
-すべて空ならライブトピックを購読します。
+Dataset作成はrosbag入力専用で、`bag_path` は必須です。
 
 | パラメータ | 意味 |
 | --- | --- |
 | `dataset_type` | 作成するDatasetの種類です。`train` または `test` を指定します。 |
 | `trajectory_name` | 保存する軌跡ディレクトリ名です。空文字の場合は日時から自動生成します。 |
-| `bag_path` | train/test共通で使用するrosbagパスです。 |
-| `train_bag_path` | train Dataset作成時だけ使用するrosbagパスです。 |
-| `test_bag_path` | test Dataset作成時だけ使用するrosbagパスです。 |
-| `sample_dt` | Datasetへ画像とオドメトリを保存する時間間隔 `[s]` です。 |
+| `pose_source` | Datasetの軌跡に使う姿勢情報です。`odometry` は `odometry_topic`、`amcl` は `amcl_pose_topic` を使用します。 |
+| `bag_path` | Dataset作成に使用するrosbagパスです。必須です。 |
+| `sample_dt` | Datasetへ画像と選択した姿勢情報を保存する時間間隔 `[s]` です。 |
 | `image_format` | 保存画像の拡張子です。例: `jpg`、`png`。 |
 
 ### training

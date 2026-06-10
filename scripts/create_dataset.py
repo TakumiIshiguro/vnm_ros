@@ -3,29 +3,25 @@ import math
 import os
 import pickle
 import sys
-import time
 from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import numpy as np
 import rospy
-from nav_msgs.msg import Odometry
-from sensor_msgs.msg import Image
 
 from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
 from vnm_ros.utils.image_utils import msg_to_pil
 from vnm_ros.utils.logger import info, warn
 
-latest_image = None
-latest_position = None
-latest_yaw = None
 
-
-def optional_path(path):
+def required_bag_path(path):
     if not path:
-        return None
-    return resolve_path(path, package_root())
+        raise ValueError("collection.bag_path must be set")
+    resolved = resolve_path(path, package_root())
+    if not os.path.isfile(resolved):
+        raise FileNotFoundError(resolved)
+    return resolved
 
 
 def stamp_to_sec(msg, bag_time):
@@ -37,12 +33,7 @@ def stamp_to_sec(msg, bag_time):
     return bag_time.to_sec()
 
 
-def image_callback(msg: Image):
-    global latest_image
-    latest_image = msg_to_pil(msg).convert("RGB")
-
-
-def odometry_to_pose(msg: Odometry):
+def pose_message_to_xy_yaw(msg):
     position = msg.pose.pose.position
     orientation = msg.pose.pose.orientation
     robot_position = np.array([position.x, position.y], dtype=np.float32)
@@ -53,9 +44,13 @@ def odometry_to_pose(msg: Odometry):
     return robot_position, robot_yaw
 
 
-def odometry_callback(msg: Odometry):
-    global latest_position, latest_yaw
-    latest_position, latest_yaw = odometry_to_pose(msg)
+def pose_input(collection_cfg, topics):
+    pose_source = collection_cfg.get("pose_source", "odometry")
+    if pose_source == "odometry":
+        return pose_source, topics.get("odometry_topic", "/odom")
+    if pose_source == "amcl":
+        return pose_source, topics.get("amcl_pose_topic", "/amcl_pose")
+    raise ValueError(f"pose_source must be odometry or amcl: {pose_source}")
 
 
 def main():
@@ -76,6 +71,7 @@ def main():
         "~trajectory_name", collection_cfg.get("trajectory_name", "")
     )
     name = trajectory_name or datetime.now().strftime("traj_%Y%m%d_%H%M%S")
+    bag_path = required_bag_path(collection_cfg.get("bag_path", ""))
     data_dir_key = "train_data_dir" if dataset_type == "train" else "test_data_dir"
     data_dir = resolve_path(dataset_cfg[data_dir_key], package_root())
     trajectory_dir = os.path.join(data_dir, name)
@@ -88,12 +84,7 @@ def main():
     sample_dt = float(collection_cfg["sample_dt"])
     last_saved = float("-inf")
     image_topic = topics["image_topic"]
-    odometry_topic = topics.get("odometry_topic", "/odom")
-    bag_path = (
-        optional_path(rospy.get_param("~bag_path", ""))
-        or optional_path(collection_cfg.get(f"{dataset_type}_bag_path", ""))
-        or optional_path(collection_cfg.get("bag_path", ""))
-    )
+    pose_source, pose_topic = pose_input(collection_cfg, topics)
 
     def finalize():
         if not positions:
@@ -112,62 +103,36 @@ def main():
             f"{len(positions)} samples"
         )
 
-    if bag_path:
-        import rosbag
+    import rosbag
 
-        current_position = None
-        current_yaw = None
-        extension = collection_cfg.get("image_format", "jpg")
-        info(
-            f"creating {dataset_type} trajectory {name} every "
-            f"{sample_dt:.3f}s from bag {bag_path}"
-        )
-        with rosbag.Bag(bag_path, "r") as bag:
-            for topic, msg, bag_time in bag.read_messages(topics=[image_topic, odometry_topic]):
-                msg_time = stamp_to_sec(msg, bag_time)
-                if topic == odometry_topic:
-                    current_position, current_yaw = odometry_to_pose(msg)
-                    continue
-                if current_position is None or current_yaw is None:
-                    continue
-                if msg_time - last_saved < sample_dt:
-                    continue
-                index = len(positions)
-                image = msg_to_pil(msg).convert("RGB")
-                image.save(os.path.join(trajectory_dir, f"{index}.{extension}"))
-                positions.append(current_position.copy())
-                yaws.append(float(current_yaw))
-                last_saved = msg_time
-                info(f"saved sample {index}")
-        finalize()
-        return
-
-    rospy.Subscriber(image_topic, Image, image_callback, queue_size=1)
-    rospy.Subscriber(odometry_topic, Odometry, odometry_callback, queue_size=1)
-
-    rospy.on_shutdown(finalize)
-    rate = rospy.Rate(max(10.0 / sample_dt, 10.0))
+    current_position = None
+    current_yaw = None
+    extension = collection_cfg.get("image_format", "jpg")
     info(
-        f"recording {dataset_type} trajectory {name} every "
-        f"{sample_dt:.3f}s from {image_topic}"
+        f"creating {dataset_type} trajectory {name} every "
+        f"{sample_dt:.3f}s from bag {bag_path} using "
+        f"{pose_source} pose {pose_topic}"
     )
-
-    while not rospy.is_shutdown():
-        now = time.monotonic()
-        if (
-            latest_image is not None
-            and latest_position is not None
-            and latest_yaw is not None
-            and now - last_saved >= sample_dt
+    with rosbag.Bag(bag_path, "r") as bag:
+        for topic, msg, bag_time in bag.read_messages(
+            topics=[image_topic, pose_topic]
         ):
+            msg_time = stamp_to_sec(msg, bag_time)
+            if topic == pose_topic:
+                current_position, current_yaw = pose_message_to_xy_yaw(msg)
+                continue
+            if current_position is None or current_yaw is None:
+                continue
+            if msg_time - last_saved < sample_dt:
+                continue
             index = len(positions)
-            extension = collection_cfg.get("image_format", "jpg")
-            latest_image.save(os.path.join(trajectory_dir, f"{index}.{extension}"))
-            positions.append(latest_position.copy())
-            yaws.append(float(latest_yaw))
-            last_saved = now
+            image = msg_to_pil(msg).convert("RGB")
+            image.save(os.path.join(trajectory_dir, f"{index}.{extension}"))
+            positions.append(current_position.copy())
+            yaws.append(float(current_yaw))
+            last_saved = msg_time
             info(f"saved sample {index}")
-        rate.sleep()
+    finalize()
 
 
 if __name__ == "__main__":

@@ -46,8 +46,7 @@ Create a topomap:
 roslaunch vnm_ros create_topomap.launch
 ```
 
-Set `bag_path` in `config/topomap.yaml` to read directly from a rosbag. Leave it
-empty to collect from the live camera topic.
+Set the required `bag_path` in `config/topomap.yaml`.
 
 Run navigation:
 
@@ -73,8 +72,15 @@ weights/best.pth
 
 ## Dataset collection
 
-Set `image_topic` and `odometry_topic` in `config/topics.yaml`, then record one
-training trajectory:
+Set the camera and pose topics in `config/topics.yaml`, then select
+`collection.pose_source` in `config/train.yaml`:
+
+```yaml
+collection:
+  pose_source: odometry  # odometry or amcl
+```
+
+Record one training trajectory:
 
 ```bash
 roslaunch vnm_ros create_dataset.launch
@@ -101,9 +107,8 @@ For rosbag input, configure `topomap.yaml` and `train.yaml` before launching.
 Collection interval, dataset paths, and training parameters are configured in
 `config/train.yaml`.
 
-Bag paths can also be set in YAML. Use `config/topomap.yaml` for topomap
-creation and `config/train.yaml` `collection.bag_path`, `train_bag_path`, or
-`test_bag_path` for dataset creation.
+Bag paths are set in YAML. Use `config/topomap.yaml` for topomap creation and
+`config/train.yaml` `collection.bag_path` for dataset creation.
 
 ## Training
 

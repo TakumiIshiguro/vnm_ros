@@ -22,9 +22,8 @@ dataset:
 collection:
   dataset_type: train
   trajectory_name: ""
-  bag_path: ""
-  train_bag_path: ""
-  test_bag_path: ""
+  pose_source: amcl
+  bag_path: "/home/takumi/bags/sim_dataset.bag"
   sample_dt: 0.25
   image_format: jpg
 
