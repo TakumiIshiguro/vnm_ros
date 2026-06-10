@@ -1,0 +1,13 @@
+<launch>
+  <include file="$(find vnm_ros)/launch/navigate.launch"/>
+
+  <node pkg="vnm_ros" type="overlay_view.py"
+        name="vnm_overlay_view" output="screen">
+    <param name="config_dir" value="$(find vnm_ros)/config"/>
+  </node>
+
+  <node pkg="image_view" type="image_view"
+        name="vnm_camera_view" output="screen">
+    <remap from="image" to="/vnm/annotated_image"/>
+  </node>
+</launch>
