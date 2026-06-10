@@ -20,6 +20,8 @@ dataset:
   negative_mining: true
 
 collection:
+  dataset_type: train
+  trajectory_name: ""
   bag_path: ""
   train_bag_path: ""
   test_bag_path: ""

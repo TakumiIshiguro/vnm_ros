@@ -1,9 +1,5 @@
 <launch>
-  <arg name="config_dir" default="$(find vnm_ros)/config"/>
-  <arg name="topomap_name" default="topomap"/>
-  <arg name="checkpoint" default="$(find vnm_ros)/weights/vint.pth"/>
-
-  <node pkg="vnm_ros" type="vnm_node.py" name="vnm_node" output="screen"
-        args="--config-dir $(arg config_dir) --topomap-name $(arg topomap_name) --checkpoint $(arg checkpoint)"/>
+  <node pkg="vnm_ros" type="vnm_node.py" name="vnm_node" output="screen">
+    <param name="config_dir" value="$(find vnm_ros)/config"/>
+  </node>
 </launch>
-

@@ -1,9 +1,5 @@
 <launch>
-  <arg name="config_dir" default="$(find vnm_ros)/config"/>
-  <arg name="topomap_name" default="topomap"/>
-  <arg name="dt" default="1.0"/>
-  <arg name="bag_path" default=""/>
-
-  <node pkg="vnm_ros" type="create_topomap.py" name="vnm_create_topomap" output="screen"
-        args="--config-dir=$(arg config_dir) --topomap-name=$(arg topomap_name) --dt=$(arg dt) --bag-path=$(arg bag_path)"/>
+  <node pkg="vnm_ros" type="create_topomap.py" name="vnm_create_topomap" output="screen">
+    <param name="config_dir" value="$(find vnm_ros)/config"/>
+  </node>
 </launch>

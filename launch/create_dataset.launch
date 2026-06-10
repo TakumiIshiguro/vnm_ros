@@ -1,14 +1,5 @@
 <launch>
-  <arg name="config_dir" default="$(find vnm_ros)/config"/>
-  <arg name="trajectory_name" default=""/>
-  <arg name="dataset" default="train"/>
-  <arg name="bag_path" default=""/>
-
-  <node if="$(eval arg('trajectory_name') != '')"
-        pkg="vnm_ros" type="create_dataset.py" name="vnm_create_dataset" output="screen"
-        args="--config-dir=$(arg config_dir) --dataset=$(arg dataset) --trajectory-name=$(arg trajectory_name) --bag-path=$(arg bag_path)"/>
-
-  <node unless="$(eval arg('trajectory_name') != '')"
-        pkg="vnm_ros" type="create_dataset.py" name="vnm_create_dataset" output="screen"
-        args="--config-dir=$(arg config_dir) --dataset=$(arg dataset) --bag-path=$(arg bag_path)"/>
+  <node pkg="vnm_ros" type="create_dataset.py" name="vnm_create_dataset" output="screen">
+    <param name="config_dir" value="$(find vnm_ros)/config"/>
+  </node>
 </launch>

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import argparse
 import math
 import os
 import sys
@@ -97,12 +96,9 @@ def paste_subgoal(base, subgoal):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-dir", default=None)
-    args = parser.parse_args(rospy.myargv()[1:])
-
     rospy.init_node("vnm_overlay_view")
-    cfg = load_runtime_config(args.config_dir)
+    config_dir = rospy.get_param("~config_dir", None)
+    cfg = load_runtime_config(config_dir)
     topics = cfg["topics"]
     robot = cfg["robot"]
 

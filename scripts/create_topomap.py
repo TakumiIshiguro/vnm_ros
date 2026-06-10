@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import argparse
 import os
 import sys
 import time
@@ -40,24 +39,20 @@ def image_callback(msg: Image):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-dir", default=None)
-    parser.add_argument("--topomap-name", default=None)
-    parser.add_argument("--dt", type=float, default=None)
-    parser.add_argument("--bag-path", default=None)
-    args = parser.parse_args(rospy.myargv()[1:])
-
     rospy.init_node("vnm_create_topomap")
-    cfg = load_runtime_config(args.config_dir)
+    config_dir = rospy.get_param("~config_dir", None)
+    cfg = load_runtime_config(config_dir)
     topics = cfg["topics"]
     topomap_cfg = cfg["topomap"]
 
-    topomap_dir = args.topomap_name or topomap_cfg["topomap_dir"]
+    topomap_dir = rospy.get_param("~topomap_dir", topomap_cfg["topomap_dir"])
     if not topomap_dir.startswith("topomaps/"):
         topomap_dir = os.path.join("topomaps", topomap_dir)
     output_dir = resolve_path(topomap_dir, package_root())
-    dt = args.dt if args.dt is not None else float(topomap_cfg["sample_dt"])
-    bag_path = optional_path(args.bag_path) or optional_path(topomap_cfg.get("bag_path", ""))
+    dt = float(rospy.get_param("~sample_dt", topomap_cfg["sample_dt"]))
+    bag_path = optional_path(
+        rospy.get_param("~bag_path", topomap_cfg.get("bag_path", ""))
+    )
 
     builder = TopomapBuilder(
         output_dir=output_dir,

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import argparse
 import math
 import os
 import pickle
@@ -60,22 +59,24 @@ def odometry_callback(msg: Odometry):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-dir", default=None)
-    parser.add_argument("--trajectory-name", default=None)
-    parser.add_argument("--dataset", choices=["train", "test"], default="train")
-    parser.add_argument("--bag-path", default=None)
-    args = parser.parse_args(rospy.myargv()[1:])
-
     rospy.init_node("vnm_create_dataset")
-    cfg = load_runtime_config(args.config_dir)
+    config_dir = rospy.get_param("~config_dir", None)
+    cfg = load_runtime_config(config_dir)
     train_cfg = cfg["train"]
     dataset_cfg = train_cfg["dataset"]
     collection_cfg = train_cfg["collection"]
     topics = cfg["topics"]
 
-    name = args.trajectory_name or datetime.now().strftime("traj_%Y%m%d_%H%M%S")
-    data_dir_key = "train_data_dir" if args.dataset == "train" else "test_data_dir"
+    dataset_type = rospy.get_param(
+        "~dataset_type", collection_cfg.get("dataset_type", "train")
+    )
+    if dataset_type not in ("train", "test"):
+        raise ValueError(f"dataset_type must be train or test: {dataset_type}")
+    trajectory_name = rospy.get_param(
+        "~trajectory_name", collection_cfg.get("trajectory_name", "")
+    )
+    name = trajectory_name or datetime.now().strftime("traj_%Y%m%d_%H%M%S")
+    data_dir_key = "train_data_dir" if dataset_type == "train" else "test_data_dir"
     data_dir = resolve_path(dataset_cfg[data_dir_key], package_root())
     trajectory_dir = os.path.join(data_dir, name)
     if os.path.exists(trajectory_dir):
@@ -89,8 +90,8 @@ def main():
     image_topic = topics["image_topic"]
     odometry_topic = topics.get("odometry_topic", "/odom")
     bag_path = (
-        optional_path(args.bag_path)
-        or optional_path(collection_cfg.get(f"{args.dataset}_bag_path", ""))
+        optional_path(rospy.get_param("~bag_path", ""))
+        or optional_path(collection_cfg.get(f"{dataset_type}_bag_path", ""))
         or optional_path(collection_cfg.get("bag_path", ""))
     )
 
@@ -107,7 +108,7 @@ def main():
                 f,
             )
         info(
-            f"saved {args.dataset} trajectory {name}: "
+            f"saved {dataset_type} trajectory {name}: "
             f"{len(positions)} samples"
         )
 
@@ -118,7 +119,7 @@ def main():
         current_yaw = None
         extension = collection_cfg.get("image_format", "jpg")
         info(
-            f"creating {args.dataset} trajectory {name} every "
+            f"creating {dataset_type} trajectory {name} every "
             f"{sample_dt:.3f}s from bag {bag_path}"
         )
         with rosbag.Bag(bag_path, "r") as bag:
@@ -147,7 +148,7 @@ def main():
     rospy.on_shutdown(finalize)
     rate = rospy.Rate(max(10.0 / sample_dt, 10.0))
     info(
-        f"recording {args.dataset} trajectory {name} every "
+        f"recording {dataset_type} trajectory {name} every "
         f"{sample_dt:.3f}s from {image_topic}"
     )
 

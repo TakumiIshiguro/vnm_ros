@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import argparse
 import os
 import sys
 
@@ -23,14 +22,9 @@ from vnm_ros.utils.logger import info
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-dir", default=None)
-    parser.add_argument("--topomap-name", default=None)
-    parser.add_argument("--checkpoint", default=None)
-    args = parser.parse_args(rospy.myargv()[1:])
-
     rospy.init_node("vnm_node")
-    cfg = load_runtime_config(args.config_dir)
+    config_dir = rospy.get_param("~config_dir", None)
+    cfg = load_runtime_config(config_dir)
     topics = cfg["topics"]
     robot = cfg["robot"]
     model_cfg = cfg["model"]
@@ -38,11 +32,11 @@ def main():
     robot["publish_cmd_vel"] = rospy.get_param("~publish_cmd_vel", robot.get("publish_cmd_vel", True))
     robot["publish_waypoint"] = rospy.get_param("~publish_waypoint", robot.get("publish_waypoint", True))
 
-    checkpoint = args.checkpoint or model_cfg["checkpoint_path"]
+    checkpoint = rospy.get_param("~checkpoint_path", model_cfg["checkpoint_path"])
     checkpoint = resolve_path(checkpoint, package_root())
     model = VNMModel(model_cfg, checkpoint)
 
-    topomap_dir = args.topomap_name or topomap_cfg["topomap_dir"]
+    topomap_dir = rospy.get_param("~topomap_dir", topomap_cfg["topomap_dir"])
     if not topomap_dir.startswith("topomaps/"):
         topomap_dir = os.path.join("topomaps", topomap_dir)
     topo = Topomap(resolve_path(topomap_dir, package_root()))
