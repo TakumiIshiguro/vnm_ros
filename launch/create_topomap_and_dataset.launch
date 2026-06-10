@@ -1,0 +1,4 @@
+<launch>
+  <include file="$(find vnm_ros)/launch/create_topomap.launch"/>
+  <include file="$(find vnm_ros)/launch/create_dataset.launch"/>
+</launch>
