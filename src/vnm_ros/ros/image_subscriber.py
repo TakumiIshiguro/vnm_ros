@@ -21,4 +21,3 @@ class ImageContextSubscriber:
 
     def context(self) -> List:
         return list(self._images)
-

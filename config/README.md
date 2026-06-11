@@ -83,7 +83,6 @@ Dataset作成、ViNT学習、評価を設定します。
 
 | パラメータ | 意味 |
 | --- | --- |
-| `run_name` | `runs/<run_name>/` に保存されるメトリクスとTensorBoardログの名前です。 |
 | `seed` | Python、NumPy、PyTorchに設定する乱数シードです。 |
 | `device` | 学習デバイスです。`auto`、`cuda`、`cuda:0`、`cpu`などを指定します。 |
 
@@ -91,7 +90,6 @@ Dataset作成、ViNT学習、評価を設定します。
 
 | パラメータ | 意味 |
 | --- | --- |
-| `name` | Datasetの識別名です。現在の学習コードでは情報表示用で、保存先の決定には使いません。 |
 | `train_data_dir` | 学習軌跡ディレクトリのパスです。直下に複数の `traj_*` を配置できます。 |
 | `test_data_dir` | テスト軌跡ディレクトリのパスです。 |
 | `image_size` | 学習時の入力画像サイズ `[幅, 高さ]` です。通常は `model.yaml` と合わせます。 |
@@ -125,7 +123,7 @@ Dataset作成はrosbag入力専用で、`bag_path` は必須です。
 | パラメータ | 意味 |
 | --- | --- |
 | `use_test` | `true` の場合、各epochでtest Datasetを評価します。`best.pth` はtest lossが最小のモデルになります。`false` の場合はtrain lossで選びます。 |
-| `tensorboard` | TensorBoardログを `runs/<run_name>/tensorboard/` へ保存するかを指定します。 |
+| `tensorboard` | TensorBoardログを日時ごとの `runs/YYYYMMDD_HHMMSS_ffffff/tensorboard/` へ保存するかを指定します。 |
 | `epochs` | 学習する総epoch数です。 |
 | `batch_size` | 1回の更新で使用するサンプル数です。 |
 | `num_workers` | PyTorch DataLoaderの並列読込プロセス数です。 |

@@ -50,7 +50,7 @@ def main():
         optimizer=torch.optim.AdamW(model.parameters(), lr=0.0),
         scheduler=None,
         device=device,
-        run_dir=resolve_path(os.path.join("runs", train_cfg["run_name"]), package_root()),
+        run_dir=resolve_path(os.path.join("runs", "eval"), package_root()),
         weights_dir=resolve_path("weights", package_root()),
         config={},
         alpha=float(train_cfg["training"]["alpha"]),

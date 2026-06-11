@@ -110,6 +110,20 @@ Collection interval, dataset paths, and training parameters are configured in
 Bag paths are set in YAML. Use `config/topomap.yaml` for topomap creation and
 `config/train.yaml` `collection.bag_path` for dataset creation.
 
+Visualize the latest training trajectory in RViz:
+
+```bash
+roslaunch vnm_ros visualize_dataset.launch
+```
+
+The launch displays the recorded images, full XY trajectory, and current pose.
+Select a test trajectory or a specific trajectory name with launch arguments:
+
+```bash
+roslaunch vnm_ros visualize_dataset.launch \
+  dataset_type:=test trajectory_name:=traj_000 rate:=8.0
+```
+
 ## Training
 
 ```bash
@@ -153,15 +167,15 @@ weights/best.pth
 Metrics and TensorBoard logs are written to:
 
 ```text
-runs/my_vint/metrics.jsonl
-runs/my_vint/tensorboard/
+runs/20260611_153000_123456/metrics.jsonl
+runs/20260611_153000_123456/tensorboard/
 ```
 
 Start TensorBoard while training or after training:
 
 ```bash
 tensorboard \
-  --logdir "$(rospack find vnm_ros)/runs/my_vint/tensorboard" \
+  --logdir "$(rospack find vnm_ros)/runs" \
   --port 6006
 ```
 

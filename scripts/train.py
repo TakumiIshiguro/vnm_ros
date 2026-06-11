@@ -3,6 +3,7 @@ import argparse
 import os
 import random
 import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
@@ -37,6 +38,14 @@ def make_dataset(config, dataset_type):
         learn_angle=bool(dataset["learn_angle"]),
         negative_mining=bool(dataset["negative_mining"]) if dataset_type == "train" else False,
     )
+
+
+def dataset_name(data_dir):
+    normalized = os.path.normpath(data_dir)
+    directory_name = os.path.basename(normalized)
+    if directory_name in ("train", "test"):
+        return os.path.basename(os.path.dirname(normalized))
+    return directory_name
 
 
 def main():
@@ -104,8 +113,11 @@ def main():
         if validation_dataset is not None
         else None
     )
-    run_dir = resolve_path(os.path.join("runs", train_cfg["run_name"]), package_root())
+    run_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    run_dir = resolve_path(os.path.join("runs", run_name), package_root())
     weights_dir = resolve_path("weights", package_root())
+    checkpoint_train_cfg = dict(train_cfg)
+    checkpoint_train_cfg["run_name"] = run_name
     trainer = Trainer(
         model=model,
         optimizer=optimizer,
@@ -113,16 +125,30 @@ def main():
         device=device,
         run_dir=run_dir,
         weights_dir=weights_dir,
-        config={"model": model_cfg, "train": train_cfg},
+        config={"model": model_cfg, "train": checkpoint_train_cfg},
         alpha=float(training["alpha"]),
         gradient_clip=float(training.get("gradient_clip", 0.0)),
         enable_tensorboard=bool(training.get("tensorboard", True)),
     )
     test_samples = len(validation_dataset) if validation_dataset is not None else 0
+    train_data_dir = resolve_path(
+        train_cfg["dataset"]["train_data_dir"], package_root()
+    )
     print(
+        f"run_name={run_name} run_dir={run_dir} "
+        f"dataset_name={dataset_name(train_data_dir)} "
+        f"train_data_dir={train_data_dir} "
         f"device={device} train_samples={len(train_dataset)} "
         f"use_test={use_test} test_samples={test_samples}"
     )
+    if validation_dataset is not None:
+        test_data_dir = resolve_path(
+            train_cfg["dataset"]["test_data_dir"], package_root()
+        )
+        print(
+            f"test_dataset_name={dataset_name(test_data_dir)} "
+            f"test_data_dir={test_data_dir}"
+        )
     trainer.fit(train_loader, validation_loader, start_epoch, int(training["epochs"]))
 
 
