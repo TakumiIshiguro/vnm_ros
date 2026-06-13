@@ -30,10 +30,10 @@ training:
   freeze_encoder: true
   use_test: false
   tensorboard: true
-  epochs: 30
+  epochs: 20
   batch_size: 64
   num_workers: 4
-  learning_rate: 0.0005
+  learning_rate: 0.00005
   weight_decay: 0.0001
   alpha: 0.5
   gradient_clip: 1.0
