@@ -122,6 +122,8 @@ Dataset作成はrosbag入力専用で、`bag_path` は必須です。
 
 | パラメータ | 意味 |
 | --- | --- |
+| `pretrained_checkpoint` | 新規学習時に初期重みとして読み込むチェックポイントです。`weights/vint.pth`を指定するとViNTの事前学習済み重みからファインチューニングします。`resume`指定時は使用されません。空文字ならランダム初期値から学習します。 |
+| `freeze_encoder` | `true`の場合、観測画像用と目標画像用のCNN Encoderを固定し、圧縮層・Transformer・距離/Waypoint出力層だけを学習します。`false`の場合はモデル全体を学習します。 |
 | `use_test` | `true` の場合、各epochでtest Datasetを評価します。`best.pth` はtest lossが最小のモデルになります。`false` の場合はtrain lossで選びます。 |
 | `tensorboard` | TensorBoardログを日時ごとの `runs/YYYYMMDD_HHMMSS_ffffff/tensorboard/` へ保存するかを指定します。 |
 | `epochs` | 学習する総epoch数です。 |

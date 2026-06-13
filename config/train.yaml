@@ -26,6 +26,8 @@ collection:
   image_format: jpg
 
 training:
+  pretrained_checkpoint: weights/vint.pth
+  freeze_encoder: true
   use_test: false
   tensorboard: true
   epochs: 30

@@ -1,6 +1,40 @@
 from typing import Dict
 
 
+def checkpoint_state_dict(checkpoint):
+    if isinstance(checkpoint, dict) and "model" in checkpoint:
+        loaded_model = checkpoint["model"]
+        try:
+            return loaded_model.module.state_dict()
+        except AttributeError:
+            return loaded_model.state_dict()
+    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+        return checkpoint["state_dict"]
+    return checkpoint
+
+
+def load_model_weights(model, checkpoint_path: str, device, strict: bool = True):
+    import torch
+
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint_state_dict(checkpoint), strict=strict)
+    return checkpoint
+
+
+def freeze_image_encoders(model):
+    encoders = []
+    for name in ("obs_encoder", "goal_encoder"):
+        encoder = getattr(model, name, None)
+        if encoder is None:
+            raise AttributeError(
+                f"{type(model).__name__} does not have required image encoder: {name}"
+            )
+        encoder.requires_grad_(False)
+        encoder.eval()
+        encoders.append(encoder)
+    return encoders
+
+
 def _build_model(config: Dict):
     model_type = config.get("model_type", config.get("model_name", "vint"))
 
@@ -34,24 +68,8 @@ def _build_model(config: Dict):
 
 
 def load_model(checkpoint_path: str, config: Dict, device):
-    import torch
-
     model = _build_model(config)
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-
-    if isinstance(checkpoint, dict) and "model" in checkpoint:
-        loaded_model = checkpoint["model"]
-        try:
-            state_dict = loaded_model.module.state_dict()
-        except AttributeError:
-            state_dict = loaded_model.state_dict()
-    elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-    else:
-        state_dict = checkpoint
-
-    model.load_state_dict(state_dict, strict=False)
+    load_model_weights(model, checkpoint_path, device, strict=True)
     model.to(device)
     model.eval()
     return model
-

@@ -12,7 +12,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from vnm_ros.datasets import ViNTDataset
-from vnm_ros.models.model_loader import _build_model
+from vnm_ros.models.model_loader import (
+    _build_model,
+    freeze_image_encoders,
+    load_model_weights,
+)
 from vnm_ros.training.checkpoint import load_training_checkpoint
 from vnm_ros.training.trainer import Trainer
 from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
@@ -78,8 +82,24 @@ def main():
     model = _build_model(model_cfg).to(device)
 
     training = train_cfg["training"]
+    resume = training.get("resume", "")
+    pretrained_checkpoint = training.get("pretrained_checkpoint", "")
+    if pretrained_checkpoint and not resume:
+        pretrained_path = resolve_path(pretrained_checkpoint, package_root())
+        if not os.path.isfile(pretrained_path):
+            raise FileNotFoundError(pretrained_path)
+        load_model_weights(model, pretrained_path, device, strict=True)
+        print(f"loaded pretrained model from {pretrained_path}")
+
+    frozen_modules = []
+    if bool(training.get("freeze_encoder", False)):
+        frozen_modules = freeze_image_encoders(model)
+
+    trainable_parameters = [p for p in model.parameters() if p.requires_grad]
+    if not trainable_parameters:
+        raise ValueError("No trainable model parameters")
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        trainable_parameters,
         lr=float(training["learning_rate"]),
         weight_decay=float(training["weight_decay"]),
     )
@@ -90,12 +110,13 @@ def main():
         )
 
     start_epoch = 0
-    resume = training.get("resume", "")
     if resume:
+        resume_path = resolve_path(resume, package_root())
         checkpoint = load_training_checkpoint(
-            resolve_path(resume, package_root()), model, optimizer, scheduler, device
+            resume_path, model, optimizer, scheduler, device
         )
         start_epoch = int(checkpoint.get("epoch", -1)) + 1
+        print(f"resumed training from {resume_path} at epoch {start_epoch}")
 
     use_test = bool(training.get("use_test", True))
     if args.use_test is not None:
@@ -129,6 +150,7 @@ def main():
         alpha=float(training["alpha"]),
         gradient_clip=float(training.get("gradient_clip", 0.0)),
         enable_tensorboard=bool(training.get("tensorboard", True)),
+        frozen_modules=frozen_modules,
     )
     test_samples = len(validation_dataset) if validation_dataset is not None else 0
     train_data_dir = resolve_path(
@@ -139,7 +161,9 @@ def main():
         f"dataset_name={dataset_name(train_data_dir)} "
         f"train_data_dir={train_data_dir} "
         f"device={device} train_samples={len(train_dataset)} "
-        f"use_test={use_test} test_samples={test_samples}"
+        f"use_test={use_test} test_samples={test_samples} "
+        f"freeze_encoder={bool(frozen_modules)} "
+        f"trainable_parameters={sum(p.numel() for p in trainable_parameters)}"
     )
     if validation_dataset is not None:
         test_data_dir = resolve_path(

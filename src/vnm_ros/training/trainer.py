@@ -24,6 +24,7 @@ class Trainer:
         alpha: float,
         gradient_clip: float = 0.0,
         enable_tensorboard: bool = True,
+        frozen_modules=None,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -34,6 +35,7 @@ class Trainer:
         self.config = config
         self.alpha = alpha
         self.gradient_clip = gradient_clip
+        self.frozen_modules = list(frozen_modules or [])
         self.writer = (
             SummaryWriter(log_dir=os.path.join(run_dir, "tensorboard"))
             if enable_tensorboard
@@ -62,6 +64,8 @@ class Trainer:
 
     def run_epoch(self, loader, training: bool) -> Dict[str, float]:
         self.model.train(training)
+        for module in self.frozen_modules:
+            module.eval()
         totals = {}
         sample_count = 0
 
