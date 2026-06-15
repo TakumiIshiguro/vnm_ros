@@ -1,6 +1,6 @@
 # vnm_ros
 
-ROS inference package for Visual Navigation Models based on `visualnav-transformer`.
+ROS inference package for Visual Navigation Models based on ViNT.
 
 This package records datasets and topological maps, trains a ViNT model, evaluates
 checkpoints, predicts local waypoints, and optionally publishes velocity commands.
@@ -10,21 +10,21 @@ checkpoints, predicts local waypoints, and optionally publishes velocity command
 - ROS Noetic
 - Python 3
 - `torch`, `torchvision`, `Pillow`, `numpy`, `PyYAML`
-- `vint_train` importable from `visualnav-transformer/train`
-- Model-specific packages such as `efficientnet-pytorch` for ViNT
-
-Install the model package from the original repository:
-
-```bash
-cd /home/takumi/catkin_ws/src/visualnav-transformer
-python3 -m pip install -e train/
-```
+- `efficientnet-pytorch`
+- `warmup-scheduler` when loading the original legacy `weights/vint.pth`
 
 Install ViNT runtime dependencies:
 
 ```bash
 python3 -m pip install efficientnet-pytorch warmup-scheduler
 ```
+
+The ViNT model implementation is included in this package. Installing
+`visualnav-transformer` or its `vint_train` package is not required. See
+`THIRD_PARTY_NOTICES.md` for upstream attribution and license terms.
+Checkpoints produced by `vnm_ros` store a plain state dictionary and do not
+depend on `warmup-scheduler`; it is needed only because the original
+`vint.pth` pickles the upstream training scheduler.
 
 ## Files
 

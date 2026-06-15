@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from vnm_ros.datasets import ViNTDataset
 from vnm_ros.models.model_loader import (
-    _build_model,
+    build_model,
     freeze_image_encoders,
     load_model_weights,
 )
@@ -79,7 +79,7 @@ def main():
     if device_name == "auto":
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device_name)
-    model = _build_model(model_cfg).to(device)
+    model = build_model(model_cfg).to(device)
 
     training = train_cfg["training"]
     resume = training.get("resume", "")

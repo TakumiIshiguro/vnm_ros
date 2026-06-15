@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from train import make_dataset
-from vnm_ros.models.model_loader import _build_model
+from vnm_ros.models.model_loader import build_model
 from vnm_ros.training.checkpoint import load_training_checkpoint
 from vnm_ros.training.trainer import Trainer
 from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
@@ -35,7 +35,7 @@ def main():
     if device_name == "auto":
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device_name)
-    model = _build_model(model_cfg).to(device)
+    model = build_model(model_cfg).to(device)
     load_training_checkpoint(resolve_path(args.checkpoint, package_root()), model, device=device)
 
     dataset = make_dataset(train_cfg, "test")

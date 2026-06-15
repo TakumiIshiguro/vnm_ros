@@ -13,7 +13,7 @@
 | `model_name` | ログ表示などに使うモデル名です。 |
 | `checkpoint_path` | 読み込むモデル重みのパスです。通常は `weights/best.pth` を指定します。 |
 | `device` | 実行デバイスです。`auto` はCUDAが利用可能ならGPU、それ以外はCPUを使用します。`cuda`、`cuda:0`、`cpu`も指定できます。 |
-| `model_type` | 構築するモデル形式です。現在は `vint` と `gnm` に対応しています。 |
+| `model_type` | 構築するモデル形式です。現在は内包した `vint` のみに対応しています。将来のモデルはモデルローダーへbuilderを登録して追加します。 |
 | `obs_encoder` | ViNTの画像エンコーダです。例: `efficientnet-b0`。 |
 | `obs_encoding_size` | 画像特徴ベクトルの次元数です。 |
 | `mha_num_attention_heads` | TransformerのMulti-Head Attentionのヘッド数です。 |
