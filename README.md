@@ -34,9 +34,9 @@ depend on `warmup-scheduler`; it is needed only because the original
 - `scripts/eval.py`: evaluate a checkpoint on the automatically held-out data.
 - `scripts/vnm_node.py`: load model, select subgoal, publish waypoint/cmd_vel.
 - `config/topics.yaml`: ROS topic names and frame id.
-- `config/robot.yaml`: control rate and velocity limits.
 - `config/model.yaml`: model architecture and checkpoint path.
-- `config/topomap.yaml`: topomap directory and subgoal selection settings.
+- `config/runtime.yaml`: robot, topomap, and visualization settings.
+- `config/training.yaml`: dataset collection, rosbag, and training settings.
 
 ## Usage
 
@@ -46,7 +46,7 @@ Create a topomap:
 roslaunch vnm_ros create_topomap.launch
 ```
 
-Set the required `bag_path` in `config/topomap.yaml`.
+Set the required rosbag path in `config/training.yaml`.
 
 Run navigation:
 
@@ -61,7 +61,7 @@ roslaunch vnm_ros navigate_visualization.launch
 ```
 
 Both launch files use the same files under `config/`. Set `publish_cmd_vel:
-false` in `config/robot.yaml` for model testing without moving the robot, or
+false` in `config/runtime.yaml` for model testing without moving the robot, or
 set it to `true` for navigation.
 
 Place checkpoints in `weights/`, for example:
@@ -73,7 +73,7 @@ weights/best.pth
 ## Dataset collection
 
 Set the camera and pose topics in `config/topics.yaml`, then select
-`collection.pose_source` in `config/train.yaml`:
+`collection.pose_source` in `config/training.yaml`:
 
 ```yaml
 collection:
@@ -93,8 +93,9 @@ Stop the node with Ctrl-C. The resulting trajectory contains numbered images and
 dataset/my_dataset/train/traj_000/
 ```
 
-Set `collection.dataset_type`, `collection.trajectory_name`, and the bag path in
-`config/train.yaml` before launching.
+Set `collection.dataset_type` and `collection.trajectory_name` in
+`config/training.yaml`, and set the bag path in `config/training.yaml` before
+launching.
 
 Create a topomap and dataset at the same time:
 
@@ -102,13 +103,10 @@ Create a topomap and dataset at the same time:
 roslaunch vnm_ros create_topomap_and_dataset.launch
 ```
 
-For rosbag input, configure `topomap.yaml` and `train.yaml` before launching.
+For rosbag input, configure `runtime.yaml` and `training.yaml` before launching.
 
 Collection interval, dataset paths, and training parameters are configured in
-`config/train.yaml`.
-
-Bag paths are set in YAML. Use `config/topomap.yaml` for topomap creation and
-`config/train.yaml` `collection.bag_path` for dataset creation.
+`config/training.yaml`. Topomap paths are configured in `config/runtime.yaml`.
 
 Visualize the latest training trajectory in RViz:
 
@@ -117,12 +115,8 @@ roslaunch vnm_ros visualize_dataset.launch
 ```
 
 The launch displays the recorded images, full XY trajectory, and current pose.
-Select a test trajectory or a specific trajectory name with launch arguments:
-
-```bash
-roslaunch vnm_ros visualize_dataset.launch \
-  dataset_type:=test trajectory_name:=traj_000 rate:=8.0
-```
+Select a test trajectory, a specific trajectory name, or playback rate in
+`config/runtime.yaml`.
 
 ## Training
 
@@ -133,9 +127,10 @@ rosrun vnm_ros train.py --config-dir $(rospack find vnm_ros)/config
 Training and test datasets use separate directories:
 
 ```yaml
-dataset:
-  train_data_dir: dataset/my_dataset/train
-  test_data_dir: dataset/my_dataset/test
+paths:
+  dataset:
+    train_data_dir: dataset/my_dataset/train
+    test_data_dir: dataset/my_dataset/test
 ```
 
 Test evaluation can be enabled or disabled:

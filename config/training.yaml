@@ -1,9 +1,14 @@
 seed: 0
 device: auto
 
+paths:
+  rosbag:
+    path: "/home/takumi/bags/dataset.bag"
+  dataset:
+    train_data_dir: dataset/my_dataset/train
+    test_data_dir: dataset/my_dataset/test
+
 dataset:
-  train_data_dir: dataset/my_dataset/train
-  test_data_dir: dataset/my_dataset/test
   image_size: [85, 64]
   metric_waypoint_spacing: 0.05
   waypoint_spacing: 1
@@ -21,7 +26,6 @@ collection:
   dataset_type: train
   trajectory_name: ""
   pose_source: odometry
-  bag_path: "/home/takumi/bags/dataset.bag"
   sample_dt: 0.25
   image_format: jpg
 

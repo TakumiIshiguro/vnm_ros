@@ -1,0 +1,27 @@
+paths:
+  topomap:
+    topomap_dir: topomaps/topomap
+
+robot:
+  model_rate: 4.0
+  max_v: 0.2
+  max_w: 0.4
+  publish_cmd_vel: true
+  publish_waypoint: true
+
+topomap:
+  goal_node: -1
+  search_radius: 4
+  close_threshold: 3
+  sample_dt: 1.0
+  overwrite: true
+
+visualization:
+  dataset:
+    dataset_type: train
+    trajectory_name: ""
+    frame_id: map
+    rate: 4.0
+    loop: true
+  overlay:
+    rate: 10.0
