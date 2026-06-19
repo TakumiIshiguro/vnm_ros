@@ -29,14 +29,12 @@ def main():
     robot = cfg["robot"]
     model_cfg = cfg["model"]
     topomap_cfg = cfg["topomap"]
-    robot["publish_cmd_vel"] = rospy.get_param("~publish_cmd_vel", robot.get("publish_cmd_vel", True))
-    robot["publish_waypoint"] = rospy.get_param("~publish_waypoint", robot.get("publish_waypoint", True))
 
-    checkpoint = rospy.get_param("~checkpoint_path", model_cfg["checkpoint_path"])
+    checkpoint = model_cfg["checkpoint_path"]
     checkpoint = resolve_path(checkpoint, package_root())
     model = VNMModel(model_cfg, checkpoint)
 
-    topomap_dir = rospy.get_param("~topomap_dir", topomap_cfg["topomap_dir"])
+    topomap_dir = topomap_cfg["topomap_dir"]
     if not topomap_dir.startswith("topomaps/"):
         topomap_dir = os.path.join("topomaps", topomap_dir)
     topo = Topomap(resolve_path(topomap_dir, package_root()))

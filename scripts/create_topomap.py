@@ -37,14 +37,12 @@ def main():
     topics = cfg["topics"]
     topomap_cfg = cfg["topomap"]
 
-    topomap_dir = rospy.get_param("~topomap_dir", topomap_cfg["topomap_dir"])
+    topomap_dir = topomap_cfg["topomap_dir"]
     if not topomap_dir.startswith("topomaps/"):
         topomap_dir = os.path.join("topomaps", topomap_dir)
     output_dir = resolve_path(topomap_dir, package_root())
-    dt = float(rospy.get_param("~sample_dt", topomap_cfg["sample_dt"]))
-    bag_path = required_bag_path(
-        rospy.get_param("~bag_path", topomap_cfg.get("bag_path", ""))
-    )
+    dt = float(topomap_cfg["sample_dt"])
+    bag_path = required_bag_path(topomap_cfg["bag_path"])
 
     builder = TopomapBuilder(
         output_dir=output_dir,

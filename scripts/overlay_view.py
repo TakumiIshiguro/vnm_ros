@@ -101,13 +101,14 @@ def main():
     cfg = load_runtime_config(config_dir)
     topics = cfg["topics"]
     robot = cfg["robot"]
+    overlay_cfg = cfg["visualization"]["overlay"]
 
     rospy.Subscriber(topics["image_topic"], Image, camera_callback, queue_size=1)
     rospy.Subscriber(topics["cmd_vel_debug_topic"], Twist, cmd_vel_callback, queue_size=1)
     rospy.Subscriber(topics["topomap_image_topic"], Image, subgoal_callback, queue_size=1)
     pub = rospy.Publisher(topics["annotated_image_topic"], Image, queue_size=1)
 
-    rate = rospy.Rate(10)
+    rate = rospy.Rate(float(overlay_cfg["rate"]))
     while not rospy.is_shutdown():
         if camera_image is not None:
             annotated = camera_image.copy()

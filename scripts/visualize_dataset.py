@@ -50,24 +50,22 @@ def main():
     config_dir = rospy.get_param("~config_dir", None)
     cfg = load_runtime_config(config_dir)
     dataset_cfg = cfg["train"]["dataset"]
-    collection_cfg = cfg["train"].get("collection", {})
+    visualization_cfg = cfg["visualization"]["dataset"]
 
-    dataset_type = rospy.get_param(
-        "~dataset_type", collection_cfg.get("dataset_type", "train")
-    )
+    dataset_type = visualization_cfg["dataset_type"]
     if dataset_type not in ("train", "test"):
         raise ValueError(f"dataset_type must be train or test: {dataset_type}")
 
     data_dir_key = "train_data_dir" if dataset_type == "train" else "test_data_dir"
     data_dir = resolve_path(dataset_cfg[data_dir_key], package_root())
-    requested_name = rospy.get_param("~trajectory_name", "")
+    requested_name = visualization_cfg["trajectory_name"]
     trajectory_name = select_trajectory(data_dir, requested_name)
     dataset = TrajectoryDataset(data_dir, [trajectory_name])
     trajectory = dataset.trajectory(trajectory_name)
 
-    frame_id = rospy.get_param("~frame_id", "map")
-    rate = float(rospy.get_param("~rate", 4.0))
-    loop = bool(rospy.get_param("~loop", True))
+    frame_id = visualization_cfg["frame_id"]
+    rate = float(visualization_cfg["rate"])
+    loop = bool(visualization_cfg["loop"])
     if rate <= 0.0:
         raise ValueError(f"rate must be positive: {rate}")
 

@@ -62,14 +62,10 @@ def main():
     collection_cfg = train_cfg["collection"]
     topics = cfg["topics"]
 
-    dataset_type = rospy.get_param(
-        "~dataset_type", collection_cfg.get("dataset_type", "train")
-    )
+    dataset_type = collection_cfg["dataset_type"]
     if dataset_type not in ("train", "test"):
         raise ValueError(f"dataset_type must be train or test: {dataset_type}")
-    trajectory_name = rospy.get_param(
-        "~trajectory_name", collection_cfg.get("trajectory_name", "")
-    )
+    trajectory_name = collection_cfg["trajectory_name"]
     name = trajectory_name or datetime.now().strftime("traj_%Y%m%d_%H%M%S")
     bag_path = required_bag_path(collection_cfg.get("bag_path", ""))
     data_dir_key = "train_data_dir" if dataset_type == "train" else "test_data_dir"

@@ -1,18 +1,7 @@
 <launch>
-  <arg name="dataset_type" default="train"/>
-  <arg name="trajectory_name" default=""/>
-  <arg name="rate" default="4.0"/>
-  <arg name="loop" default="true"/>
-  <arg name="frame_id" default="map"/>
-
   <node pkg="vnm_ros" type="visualize_dataset.py"
         name="vnm_visualize_dataset" output="screen">
     <param name="config_dir" value="$(find vnm_ros)/config"/>
-    <param name="dataset_type" value="$(arg dataset_type)"/>
-    <param name="trajectory_name" value="$(arg trajectory_name)"/>
-    <param name="rate" value="$(arg rate)"/>
-    <param name="loop" value="$(arg loop)"/>
-    <param name="frame_id" value="$(arg frame_id)"/>
   </node>
 
   <node pkg="rviz" type="rviz" name="vnm_dataset_rviz"
