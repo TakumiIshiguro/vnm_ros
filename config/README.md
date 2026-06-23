@@ -5,28 +5,67 @@
 
 ## model.yaml
 
-モデルの構造、重み、推論方法を設定します。学習済み重みとモデル構造の
-設定が一致している必要があります。
+モデルの構造、重み、推論方法を設定します。`model_type` で使うモデルを
+選び、`common` と選択したモデル専用セクションを結合して読み込みます。
+
+### top level
 
 | パラメータ | 意味 |
 | --- | --- |
-| `model_name` | ログ表示などに使うモデル名です。 |
-| `checkpoint_path` | 読み込むモデル重みのパスです。通常は `weights/best.pth` を指定します。 |
+| `checkpoint_path` | 読み込むモデル重みの共通デフォルトです。モデル専用セクションの値が優先されます。 |
 | `device` | 実行デバイスです。`auto` はCUDAが利用可能ならGPU、それ以外はCPUを使用します。 |
-| `model_type` | 構築するモデル形式です。現在は内包した `vint` のみに対応しています。 |
-| `obs_encoder` | ViNTの画像エンコーダです。 |
-| `obs_encoding_size` | 画像特徴ベクトルの次元数です。 |
+| `model_type` | 構築するモデル形式です。`vint` または `nomad` を指定します。 |
+
+### common
+
+ViNTとNoMaDで共通する設定です。
+
+| パラメータ | 意味 |
+| --- | --- |
+| `obs_encoder` | 画像エンコーダです。 |
 | `mha_num_attention_heads` | TransformerのMulti-Head Attentionのヘッド数です。 |
 | `mha_num_attention_layers` | Transformer Encoderの層数です。 |
 | `mha_ff_dim_factor` | Transformer内のFeed Forward層の拡大率です。 |
-| `late_fusion` | 観測画像と目標画像を後段で融合するかを指定します。 |
 | `context_type` | コンテキスト形式を表す設定値です。現在の実装では未使用です。 |
+| `normalize` | `true` の場合、ViNTのモデル出力WaypointのXYを実機用の距離へスケーリングします。 |
+| `waypoint_index` | 予測されたWaypoint列のうち、制御に使用する番号です。0始まりです。 |
+
+### vint
+
+ViNT専用、またはViNT checkpointに合わせる設定です。
+
+| パラメータ | 意味 |
+| --- | --- |
+| `checkpoint_path` | ViNTで読み込むモデル重みのパスです。 |
+| `obs_encoding_size` | ViNTの画像特徴ベクトルの次元数です。 |
+| `late_fusion` | 観測画像と目標画像を後段で融合するかを指定します。 |
 | `context_size` | 現在画像より前に使う画像枚数です。 |
-| `normalize` | `true` の場合、モデル出力WaypointのXYを実機用の距離へスケーリングします。 |
 | `image_size` | モデル入力画像の `[幅, 高さ]` です。 |
 | `len_traj_pred` | モデルが予測する将来Waypoint数です。 |
 | `learn_angle` | `true` の場合、WaypointのXYに加えて向きのcos/sinも学習・出力します。 |
-| `waypoint_index` | 予測されたWaypoint列のうち、制御に使用する番号です。0始まりです。 |
+
+### nomad
+
+NoMaD専用、またはNoMaD checkpointに合わせる設定です。
+
+| パラメータ | 意味 |
+| --- | --- |
+| `checkpoint_path` | NoMaDで読み込むモデル重みのパスです。 |
+| `encoding_size` | NoMaDの条件ベクトル次元数です。 |
+| `context_size` | 現在画像より前に使う画像枚数です。 |
+| `image_size` | モデル入力画像の `[幅, 高さ]` です。 |
+| `len_traj_pred` | モデルが予測する将来Waypoint数です。 |
+| `learn_angle` | NoMaDでは通常 `false` です。 |
+| `down_dims` | NoMaD diffusion U-Netの各段の次元数です。 |
+| `cond_predict_scale` | NoMaD diffusion U-Netで条件付きscale予測を使うかを指定します。 |
+| `num_diffusion_iters` | NoMaD推論時の逆拡散ステップ数です。 |
+| `num_action_samples` | NoMaDでゴール候補ごとにサンプルするAction数です。 |
+| `action_sample_strategy` | 複数Actionサンプルの選び方です。`first` または `mean` を指定します。 |
+| `action_stats` | NoMaDの正規化済みActionを実Actionへ戻すためのmin/maxです。 |
+
+NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`、
+`diffusion_policy` とその依存パッケージが必要です。現在の `scripts/train.py`
+はViNT用の教師あり学習ループで、NoMaDのdiffusion学習には対応していません。
 
 ## topics.yaml
 

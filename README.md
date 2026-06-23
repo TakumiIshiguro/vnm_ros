@@ -1,9 +1,10 @@
 # vnm_ros
 
-ROS inference package for Visual Navigation Models based on ViNT.
+ROS inference package for Visual Navigation Models based on ViNT and NoMaD.
 
-This package records datasets and topological maps, trains a ViNT model, evaluates
-checkpoints, predicts local waypoints, and optionally publishes velocity commands.
+This package records datasets and topological maps, trains a ViNT model,
+evaluates checkpoints, predicts local waypoints, and optionally publishes
+velocity commands. NoMaD checkpoints are supported for navigation inference.
 
 ## Requirements
 
@@ -12,6 +13,7 @@ checkpoints, predicts local waypoints, and optionally publishes velocity command
 - `torch`, `torchvision`, `Pillow`, `numpy`, `PyYAML`
 - `efficientnet-pytorch`
 - `warmup-scheduler` when loading the original legacy `weights/vint.pth`
+- `diffusers`, `diffusion_policy`, and dependencies such as `einops` for NoMaD
 
 Install ViNT runtime dependencies:
 
@@ -19,9 +21,17 @@ Install ViNT runtime dependencies:
 python3 -m pip install efficientnet-pytorch warmup-scheduler
 ```
 
-The ViNT model implementation is included in this package. Installing
-`visualnav-transformer` or its `vint_train` package is not required. See
-`THIRD_PARTY_NOTICES.md` for upstream attribution and license terms.
+NoMaD inference also needs the diffusion packages used by the upstream model:
+
+```bash
+python3 -m pip install diffusers einops
+```
+
+and a working `diffusion_policy` installation on `PYTHONPATH`.
+
+The ViNT and NoMaD model components used by this package are included locally.
+Installing `visualnav-transformer` or its `vint_train` package is not required.
+See `THIRD_PARTY_NOTICES.md` for upstream attribution and license terms.
 Checkpoints produced by `vnm_ros` store a plain state dictionary and do not
 depend on `warmup-scheduler`; it is needed only because the original
 `vint.pth` pickles the upstream training scheduler.

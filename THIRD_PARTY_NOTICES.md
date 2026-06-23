@@ -1,11 +1,12 @@
 # Third-Party Notices
 
-## visualnav-transformer / ViNT
+## visualnav-transformer / ViNT / NoMaD
 
 The following files contain code adapted from `visualnav-transformer`:
 
 - `src/vnm_ros/models/base_model.py`
 - `src/vnm_ros/models/self_attention.py`
+- `src/vnm_ros/models/nomad_model.py`
 - `src/vnm_ros/models/vint_model.py`
 
 Source:
