@@ -60,6 +60,12 @@ def main():
     cfg = load_runtime_config(args.config_dir)
     train_cfg = cfg["train"]
     model_cfg = dict(cfg["model"])
+    if model_cfg["model_type"] == "nomad":
+        raise NotImplementedError(
+            "NoMaD diffusion training is not supported by scripts/train.py. "
+            "Use this package's NoMaD support for inference with a pretrained "
+            "checkpoint, or add a NoMaD-specific diffusion trainer."
+        )
     model_cfg.update(
         {
             "context_size": train_cfg["dataset"]["context_size"],

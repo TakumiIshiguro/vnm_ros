@@ -10,7 +10,7 @@ from std_msgs.msg import Bool
 from visualization_msgs.msg import Marker
 
 from vnm_ros.control.waypoint_controller import WaypointController
-from vnm_ros.models.vint import VNMModel
+from vnm_ros.models.vnm_model import VNMModel
 from vnm_ros.ros.cmd_vel_publisher import CmdVelPublisher
 from vnm_ros.ros.image_subscriber import ImageContextSubscriber
 from vnm_ros.ros.ros_utils import waypoint_marker, waypoint_msg
@@ -63,7 +63,7 @@ def main():
 
     rate = rospy.Rate(float(robot["model_rate"]))
     waypoint_index = int(model_cfg["waypoint_index"])
-    info(f"loaded {model_cfg['model_name']} from {checkpoint}")
+    info(f"loaded {model_cfg['model_type']} from {checkpoint}")
     info(f"loaded topomap {topomap_dir} with {len(topo)} nodes")
     info(f"goal_node={goal_node}")
     reached_logged = False

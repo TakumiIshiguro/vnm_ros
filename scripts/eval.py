@@ -24,6 +24,11 @@ def main():
     cfg = load_runtime_config(args.config_dir)
     train_cfg = cfg["train"]
     model_cfg = dict(cfg["model"])
+    if model_cfg["model_type"] == "nomad":
+        raise NotImplementedError(
+            "NoMaD evaluation is not supported by scripts/eval.py because it "
+            "uses a diffusion action head instead of the ViNT supervised head."
+        )
     model_cfg.update(
         {
             "context_size": train_cfg["dataset"]["context_size"],

@@ -2,24 +2,14 @@ from typing import List
 
 import numpy as np
 
-from vnm_ros.models.model_loader import load_model
 from vnm_ros.utils.image_utils import to_numpy, transform_images
 
 
-class VNMModel:
-    def __init__(self, config: dict, checkpoint_path: str):
-        import torch
-
-        device_name = config.get("device", "auto")
-        if device_name == "auto":
-            device_name = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = torch.device(device_name)
+class ViNTInference:
+    def __init__(self, model, config: dict, device):
+        self.model = model
         self.config = config
-        self.model = load_model(checkpoint_path, config, self.device)
-
-    @property
-    def context_size(self) -> int:
-        return int(self.config["context_size"])
+        self.device = device
 
     def predict(self, context_images: List, goal_images: List):
         import torch
@@ -43,4 +33,3 @@ class VNMModel:
             waypoint = waypoint.copy()
             waypoint[:2] *= max_v / model_rate
         return waypoint
-
