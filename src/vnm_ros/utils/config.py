@@ -49,6 +49,23 @@ def apply_shared_paths(config: Dict[str, Dict[str, Any]]) -> None:
     set_if_missing(topomap_cfg, "topomap_dir", topomap_paths.get("topomap_dir"))
 
 
+def expand_model_config(model_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    model_type = model_cfg["model_type"]
+    common_cfg = model_cfg.get("common", {})
+    type_cfg = model_cfg.get(model_type)
+    if type_cfg is None:
+        raise ValueError(f"model.yaml is missing a '{model_type}' section")
+
+    expanded = {
+        key: value
+        for key, value in model_cfg.items()
+        if key not in ("common", "vint", "nomad")
+    }
+    expanded.update(common_cfg)
+    expanded.update(type_cfg)
+    return expanded
+
+
 def resolve_path(path: str, base_dir: str = None) -> str:
     if os.path.isabs(path):
         return path
@@ -65,7 +82,7 @@ def load_runtime_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
     config = {
         "paths": merge_paths(runtime_cfg, training_cfg),
         "topics": load_yaml(os.path.join(config_dir, "topics.yaml")),
-        "model": load_yaml(os.path.join(config_dir, "model.yaml")),
+        "model": expand_model_config(load_yaml(os.path.join(config_dir, "model.yaml"))),
         "robot": runtime_cfg["robot"],
         "topomap": runtime_cfg["topomap"],
         "visualization": runtime_cfg["visualization"],

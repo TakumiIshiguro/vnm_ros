@@ -1,18 +1,37 @@
-model_name: vint
-checkpoint_path: weights/best.pth
+checkpoint_path: weights/nomad.pth
 device: auto
+model_type: nomad
 
-model_type: vint
-obs_encoder: efficientnet-b0
-obs_encoding_size: 512
-mha_num_attention_heads: 4
-mha_num_attention_layers: 4
-mha_ff_dim_factor: 4
-late_fusion: false
-context_type: temporal
-context_size: 5
-normalize: true
-image_size: [85, 64]
-len_traj_pred: 5
-learn_angle: true
-waypoint_index: 2
+common:
+  obs_encoder: efficientnet-b0
+  mha_num_attention_heads: 4
+  mha_num_attention_layers: 4
+  mha_ff_dim_factor: 4
+  context_type: temporal
+  normalize: true
+  waypoint_index: 2
+
+vint:
+  checkpoint_path: weights/vint.pth
+  obs_encoding_size: 512
+  late_fusion: false
+  context_size: 5
+  image_size: [85, 64]
+  len_traj_pred: 5
+  learn_angle: true
+
+nomad:
+  checkpoint_path: weights/nomad.pth
+  encoding_size: 256
+  context_size: 3
+  image_size: [96, 96]
+  len_traj_pred: 8
+  learn_angle: false
+  cond_predict_scale: false
+  down_dims: [64, 128, 256]
+  num_diffusion_iters: 10
+  num_action_samples: 1
+  action_sample_strategy: first
+  action_stats:
+    min: [-2.5, -4.0]
+    max: [5.0, 4.0]
