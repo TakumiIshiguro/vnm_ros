@@ -12,6 +12,7 @@ from visualization_msgs.msg import Marker
 from vnm_ros.control.waypoint_controller import WaypointController
 from vnm_ros.models.vnm_model import VNMModel
 from vnm_ros.ros.cmd_vel_publisher import CmdVelPublisher
+from vnm_ros.ros.cmd_dir_subscriber import CmdDirSubscriber
 from vnm_ros.ros.image_subscriber import ImageContextSubscriber
 from vnm_ros.ros.ros_utils import waypoint_marker, waypoint_msg
 from vnm_ros.topomap.subgoal_selector import SubgoalSelector
@@ -33,25 +34,36 @@ def main():
     checkpoint = model_cfg["checkpoint_path"]
     checkpoint = resolve_path(checkpoint, package_root())
     model = VNMModel(model_cfg, checkpoint)
+    use_direction = model_cfg["model_type"] == "direction_vint"
 
-    topomap_dir = topomap_cfg["topomap_dir"]
-    if not topomap_dir.startswith("topomaps/"):
-        topomap_dir = os.path.join("topomaps", topomap_dir)
-    topo = Topomap(resolve_path(topomap_dir, package_root()))
+    topo = None
+    selector = None
+    goal_node = None
+    topomap_dir = None
+    if not use_direction:
+        topomap_dir = topomap_cfg["topomap_dir"]
+        if not topomap_dir.startswith("topomaps/"):
+            topomap_dir = os.path.join("topomaps", topomap_dir)
+        topo = Topomap(resolve_path(topomap_dir, package_root()))
 
-    goal_node = int(topomap_cfg["goal_node"])
-    if goal_node < 0:
-        goal_node = len(topo) - 1
-    selector = SubgoalSelector(
-        goal_node=goal_node,
-        search_radius=int(topomap_cfg["search_radius"]),
-        close_threshold=float(topomap_cfg["close_threshold"]),
-    )
+        goal_node = int(topomap_cfg["goal_node"])
+        if goal_node < 0:
+            goal_node = len(topo) - 1
+        selector = SubgoalSelector(
+            goal_node=goal_node,
+            search_radius=int(topomap_cfg["search_radius"]),
+            close_threshold=float(topomap_cfg["close_threshold"]),
+        )
 
     image_sub = ImageContextSubscriber(topics["image_topic"], model.context_size)
+    cmd_dir_sub = (
+        CmdDirSubscriber(topics["cmd_dir_topic"]) if use_direction else None
+    )
     waypoint_pub = rospy.Publisher(topics["waypoint_topic"], waypoint_msg([]).__class__, queue_size=1)
     marker_pub = rospy.Publisher(topics["marker_topic"], Marker, queue_size=1)
-    subgoal_pub = rospy.Publisher(topics["topomap_image_topic"], pil_to_msg(topo.images[0]).__class__, queue_size=1)
+    subgoal_pub = None
+    if topo is not None:
+        subgoal_pub = rospy.Publisher(topics["topomap_image_topic"], pil_to_msg(topo.images[0]).__class__, queue_size=1)
     reached_pub = rospy.Publisher(topics["reached_goal_topic"], Bool, queue_size=1)
     cmd_debug_pub = rospy.Publisher(topics["cmd_vel_debug_topic"], Twist, queue_size=1)
     cmd_pub = CmdVelPublisher(topics["cmd_vel_topic"])
@@ -64,29 +76,46 @@ def main():
     rate = rospy.Rate(float(robot["model_rate"]))
     waypoint_index = int(model_cfg["waypoint_index"])
     info(f"loaded {model_cfg['model_type']} from {checkpoint}")
-    info(f"loaded topomap {topomap_dir} with {len(topo)} nodes")
-    info(f"goal_node={goal_node}")
+    if use_direction:
+        info(f"using cmd_dir topic {topics['cmd_dir_topic']}")
+    else:
+        info(f"loaded topomap {topomap_dir} with {len(topo)} nodes")
+        info(f"goal_node={goal_node}")
     reached_logged = False
 
     while not rospy.is_shutdown():
-        if image_sub.ready() and not selector.reached_goal():
-            start, end = selector.window_bounds()
-            distances, waypoints = model.predict(image_sub.context(), topo.window(start, end))
-            waypoint = selector.select(distances, waypoints, waypoint_index)
+        reached = False if use_direction else selector.reached_goal()
+        if image_sub.ready() and not reached:
+            if use_direction:
+                if not cmd_dir_sub.ready():
+                    rate.sleep()
+                    continue
+                _, waypoints = model.predict_direction(
+                    image_sub.context(), cmd_dir_sub.cmd_dir()
+                )
+                waypoint = waypoints[0][waypoint_index]
+            else:
+                start, end = selector.window_bounds()
+                distances, waypoints = model.predict(image_sub.context(), topo.window(start, end))
+                waypoint = selector.select(distances, waypoints, waypoint_index)
             waypoint = model.scale_waypoint(
                 waypoint,
                 max_v=float(robot["max_v"]),
                 model_rate=float(robot["model_rate"]),
             )
-            info(
-                f"current_node={selector.localized_node} "
-                f"last_node={goal_node}"
-            )
+            if use_direction:
+                info(f"cmd_dir={cmd_dir_sub.cmd_dir()}")
+            else:
+                info(
+                    f"current_node={selector.localized_node} "
+                    f"last_node={goal_node}"
+                )
 
             if robot.get("publish_waypoint", True):
                 waypoint_pub.publish(waypoint_msg(waypoint))
             marker_pub.publish(waypoint_marker(waypoint, topics["frame_id"]))
-            subgoal_pub.publish(pil_to_msg(topo.images[selector.selected_node]))
+            if subgoal_pub is not None:
+                subgoal_pub.publish(pil_to_msg(topo.images[selector.selected_node]))
 
             v, w = controller.command(waypoint)
             cmd_debug = Twist()
@@ -97,7 +126,7 @@ def main():
             if robot.get("publish_cmd_vel", True):
                 cmd_pub.publish(v, w)
 
-        reached = selector.reached_goal()
+        reached = False if use_direction else selector.reached_goal()
         reached_pub.publish(Bool(data=reached))
         if reached:
             cmd_debug_pub.publish(Twist())
