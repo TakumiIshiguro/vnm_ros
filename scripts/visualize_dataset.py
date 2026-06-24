@@ -9,7 +9,10 @@ import rospy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 from PIL import Image as PILImage
+from PIL import ImageDraw
 from sensor_msgs.msg import Image
+from std_msgs.msg import Float32MultiArray
+from visualization_msgs.msg import Marker, MarkerArray
 
 from vnm_ros.datasets.trajectory_dataset import TrajectoryDataset
 from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
@@ -30,6 +33,79 @@ def pose_stamped(position, yaw, frame_id, stamp):
     pose.pose.position.y = float(position[1])
     pose.pose.orientation.z, pose.pose.orientation.w = yaw_to_quaternion(float(yaw))
     return pose
+
+
+def cmd_dir_name(cmd_dir):
+    index = int(max(range(len(cmd_dir)), key=lambda i: cmd_dir[i]))
+    return ["straight", "left", "right"][index] if index < 3 else "unknown"
+
+
+def cmd_dir_index(cmd_dir):
+    return int(max(range(len(cmd_dir)), key=lambda i: cmd_dir[i]))
+
+
+def cmd_dir_color(index):
+    colors = {
+        0: (0.1, 0.9, 0.1, 1.0),
+        1: (0.1, 0.35, 1.0, 1.0),
+        2: (1.0, 0.15, 0.1, 1.0),
+    }
+    return colors.get(index, (1.0, 1.0, 1.0, 1.0))
+
+
+def direction_marker(marker_id, position, cmd_dir, frame_id, stamp):
+    index = cmd_dir_index(cmd_dir)
+    marker = Marker()
+    marker.header.frame_id = frame_id
+    marker.header.stamp = stamp
+    marker.ns = "dataset_cmd_dir"
+    marker.id = marker_id
+    marker.type = Marker.SPHERE
+    marker.action = Marker.ADD
+    marker.pose.position.x = float(position[0])
+    marker.pose.position.y = float(position[1])
+    marker.pose.position.z = 0.05
+    marker.pose.orientation.w = 1.0
+    marker.scale.x = 0.18
+    marker.scale.y = 0.18
+    marker.scale.z = 0.18
+    r, g, b, a = cmd_dir_color(index)
+    marker.color.r = r
+    marker.color.g = g
+    marker.color.b = b
+    marker.color.a = a
+    return marker
+
+
+def direction_marker_array(positions, cmd_dirs, frame_id, stamp):
+    markers = MarkerArray()
+    if cmd_dirs is None:
+        return markers
+    markers.markers = [
+        direction_marker(i, position, cmd_dir, frame_id, stamp)
+        for i, (position, cmd_dir) in enumerate(zip(positions, cmd_dirs))
+    ]
+    return markers
+
+
+def draw_cmd_dir(image, cmd_dir):
+    if cmd_dir is None:
+        return image
+    draw = ImageDraw.Draw(image)
+    values = ", ".join(f"{float(value):.0f}" for value in cmd_dir)
+    text = f"cmd_dir: {cmd_dir_name(cmd_dir)} [{values}]"
+    margin = 8
+    box = draw.textbbox((margin, margin), text)
+    pad = 4
+    rect = (
+        box[0] - pad,
+        box[1] - pad,
+        box[2] + pad,
+        box[3] + pad,
+    )
+    draw.rectangle(rect, fill=(0, 0, 0))
+    draw.text((margin, margin), text, fill=(255, 255, 255))
+    return image
 
 
 def select_trajectory(data_dir, requested_name):
@@ -72,6 +148,10 @@ def main():
     image_pub = rospy.Publisher("~image", Image, queue_size=1)
     path_pub = rospy.Publisher("~path", Path, queue_size=1, latch=True)
     pose_pub = rospy.Publisher("~pose", PoseStamped, queue_size=1)
+    cmd_dir_pub = rospy.Publisher("~cmd_dir", Float32MultiArray, queue_size=1)
+    direction_markers_pub = rospy.Publisher(
+        "~direction_markers", MarkerArray, queue_size=1, latch=True
+    )
 
     path = Path()
     path.header.frame_id = frame_id
@@ -83,6 +163,21 @@ def main():
     path_pub.publish(path)
 
     sample_count = len(path.poses)
+    cmd_dirs = trajectory.get("cmd_dir")
+    direction_markers_pub.publish(
+        direction_marker_array(
+            trajectory["position"], cmd_dirs, frame_id, path.header.stamp
+        )
+    )
+    print(
+        f"loaded_dataset type={dataset_type} "
+        f"class={type(dataset).__name__} "
+        f"data_dir={data_dir} "
+        f"trajectory={trajectory_name} "
+        f"samples={sample_count} "
+        f"has_cmd_dir={cmd_dirs is not None}",
+        flush=True,
+    )
     info(
         f"visualizing {dataset_type} trajectory {trajectory_name}: "
         f"{sample_count} samples at {rate:.2f} Hz"
@@ -94,10 +189,14 @@ def main():
         stamp = rospy.Time.now()
         with PILImage.open(dataset.image_path(trajectory_name, index)) as source:
             image = source.convert("RGB")
+        cmd_dir = cmd_dirs[index] if cmd_dirs is not None else None
+        image = draw_cmd_dir(image, cmd_dir)
         image_msg = pil_to_msg(image)
         image_msg.header.frame_id = frame_id
         image_msg.header.stamp = stamp
         image_pub.publish(image_msg)
+        if cmd_dir is not None:
+            cmd_dir_pub.publish(Float32MultiArray(data=list(map(float, cmd_dir))))
         pose_pub.publish(
             pose_stamped(
                 trajectory["position"][index],
