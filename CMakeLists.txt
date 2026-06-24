@@ -19,6 +19,7 @@ catkin_install_python(PROGRAMS
   scripts/create_dataset.py
   scripts/create_topomap.py
   scripts/eval.py
+  scripts/keyboard_cmd_dir.py
   scripts/overlay_view.py
   scripts/train.py
   scripts/vnm_node.py
