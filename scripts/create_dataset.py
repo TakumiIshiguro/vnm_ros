@@ -53,6 +53,13 @@ def pose_input(collection_cfg, topics):
     raise ValueError(f"pose_source must be odometry or amcl: {pose_source}")
 
 
+def cmd_dir_from_msg(msg):
+    cmd_dir = np.asarray(list(msg.cmd_dir), dtype=np.float32)
+    if cmd_dir.shape != (3,):
+        raise ValueError(f"cmd_dir must have length 3, got {cmd_dir.shape}")
+    return cmd_dir
+
+
 def main():
     rospy.init_node("vnm_create_dataset")
     config_dir = rospy.get_param("~config_dir", None)
@@ -77,9 +84,11 @@ def main():
 
     positions = []
     yaws = []
+    cmd_dirs = []
     sample_dt = float(collection_cfg["sample_dt"])
     last_saved = float("-inf")
     image_topic = topics["image_topic"]
+    cmd_dir_topic = topics.get("cmd_dir_topic", "/cmd_dir_intersection")
     pose_source, pose_topic = pose_input(collection_cfg, topics)
 
     def finalize():
@@ -91,6 +100,7 @@ def main():
                 {
                     "position": np.asarray(positions, dtype=np.float32),
                     "yaw": np.asarray(yaws, dtype=np.float32),
+                    "cmd_dir": np.asarray(cmd_dirs, dtype=np.float32),
                 },
                 f,
             )
@@ -103,21 +113,27 @@ def main():
 
     current_position = None
     current_yaw = None
+    current_cmd_dir = None
     extension = collection_cfg.get("image_format", "jpg")
     info(
         f"creating {dataset_type} trajectory {name} every "
         f"{sample_dt:.3f}s from bag {bag_path} using "
-        f"{pose_source} pose {pose_topic}"
+        f"{pose_source} pose {pose_topic} and cmd_dir {cmd_dir_topic}"
     )
     with rosbag.Bag(bag_path, "r") as bag:
         for topic, msg, bag_time in bag.read_messages(
-            topics=[image_topic, pose_topic]
+            topics=[image_topic, pose_topic, cmd_dir_topic]
         ):
             msg_time = stamp_to_sec(msg, bag_time)
             if topic == pose_topic:
                 current_position, current_yaw = pose_message_to_xy_yaw(msg)
                 continue
+            if topic == cmd_dir_topic:
+                current_cmd_dir = cmd_dir_from_msg(msg)
+                continue
             if current_position is None or current_yaw is None:
+                continue
+            if current_cmd_dir is None:
                 continue
             if msg_time - last_saved < sample_dt:
                 continue
@@ -126,6 +142,7 @@ def main():
             image.save(os.path.join(trajectory_dir, f"{index}.{extension}"))
             positions.append(current_position.copy())
             yaws.append(float(current_yaw))
+            cmd_dirs.append(current_cmd_dir.copy())
             last_saved = msg_time
             info(f"saved sample {index}")
     finalize()

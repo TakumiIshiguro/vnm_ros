@@ -39,7 +39,11 @@ class TrajectoryDataset(Dataset):
                 raise ValueError(
                     f"{name}: images={len(files)}, positions={length}, yaw={len(trajectory['yaw'])}"
                 )
+            self._validate_trajectory(name, trajectory, length)
             self._image_files[name] = files
+
+    def _validate_trajectory(self, name: str, trajectory: dict, length: int):
+        pass
 
     def trajectory(self, name: str) -> dict:
         if name not in self._trajectories:

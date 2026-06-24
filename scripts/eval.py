@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import torch
 from torch.utils.data import DataLoader
 
-from train import make_dataset
+from train import make_dataset, print_dataset_summary
 from vnm_ros.models.model_loader import build_model
 from vnm_ros.training.checkpoint import load_training_checkpoint
 from vnm_ros.training.trainer import Trainer
@@ -20,7 +20,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-dir", default=None)
     parser.add_argument("--checkpoint", required=True)
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
     cfg = load_runtime_config(args.config_dir)
     train_cfg = cfg["train"]
     model_cfg = dict(cfg["model"])
@@ -43,7 +43,8 @@ def main():
     model = build_model(model_cfg).to(device)
     load_training_checkpoint(resolve_path(args.checkpoint, package_root()), model, device=device)
 
-    dataset = make_dataset(train_cfg, "test")
+    dataset = make_dataset(train_cfg, "test", model_cfg["model_type"])
+    print_dataset_summary(dataset, "test")
     loader = DataLoader(
         dataset,
         batch_size=int(train_cfg["training"]["batch_size"]),
@@ -57,7 +58,7 @@ def main():
         device=device,
         run_dir=resolve_path(os.path.join("runs", "eval"), package_root()),
         weights_dir=resolve_path("weights", package_root()),
-        config={},
+        config={"model": model_cfg, "train": train_cfg},
         alpha=float(train_cfg["training"]["alpha"]),
         enable_tensorboard=False,
     )

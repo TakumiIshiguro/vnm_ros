@@ -1,0 +1,4 @@
+<launch>
+  <node pkg="vnm_ros" type="train.py" name="vnm_train" output="screen"
+        args="--config-dir $(find vnm_ros)/config"/>
+</launch>

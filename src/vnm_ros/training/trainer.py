@@ -48,19 +48,28 @@ class Trainer:
         )
         os.makedirs(run_dir, exist_ok=True)
         os.makedirs(weights_dir, exist_ok=True)
+        self.model_type = config.get("model", {}).get("model_type", "vint")
 
     def _prepare(self, batch):
         observation = batch["observation"]
         chunks = torch.split(observation, 3, dim=1)
         observation = torch.cat([self.normalize(chunk) for chunk in chunks], dim=1)
-        goal = self.normalize(batch["goal"])
-        return {
+        data = {
             "observation": observation.to(self.device),
-            "goal": goal.to(self.device),
             "distance": batch["distance"].to(self.device),
             "actions": batch["actions"].to(self.device),
             "action_mask": batch["action_mask"].to(self.device),
         }
+        if "goal" in batch:
+            data["goal"] = self.normalize(batch["goal"]).to(self.device)
+        if "cmd_dir" in batch:
+            data["cmd_dir"] = batch["cmd_dir"].to(self.device)
+        return data
+
+    def _predict(self, data):
+        if self.model_type == "direction_vint":
+            return self.model(data["observation"], data["cmd_dir"])
+        return self.model(data["observation"], data["goal"])
 
     def run_epoch(self, loader, training: bool) -> Dict[str, float]:
         self.model.train(training)
@@ -72,9 +81,7 @@ class Trainer:
         for batch in loader:
             data = self._prepare(batch)
             with torch.set_grad_enabled(training):
-                distance_pred, action_pred = self.model(
-                    data["observation"], data["goal"]
-                )
+                distance_pred, action_pred = self._predict(data)
                 losses = compute_losses(
                     distance_pred,
                     action_pred,

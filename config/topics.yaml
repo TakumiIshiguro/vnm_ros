@@ -1,6 +1,7 @@
 image_topic: /camera_center/image_raw
 odometry_topic: /odom
-amcl_pose_topic: /amcl_pose
+amcl_pose_topic: /mcl_pose
+cmd_dir_topic: /cmd_dir_intersection
 waypoint_topic: /waypoint
 cmd_vel_topic: /cmd_vel
 cmd_vel_debug_topic: /vnm/cmd_vel_debug

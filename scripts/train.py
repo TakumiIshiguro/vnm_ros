@@ -11,10 +11,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from vnm_ros.datasets import ViNTDataset
+from vnm_ros.datasets import DirectionViNTDataset, ViNTDataset
 from vnm_ros.models.model_loader import (
     build_model,
     freeze_image_encoders,
+    load_observation_encoder_weights,
     load_model_weights,
 )
 from vnm_ros.training.checkpoint import load_training_checkpoint
@@ -22,24 +23,34 @@ from vnm_ros.training.trainer import Trainer
 from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
 
 
-def make_dataset(config, dataset_type):
+def make_dataset(config, dataset_type, model_type="vint"):
     dataset = config["dataset"]
     data_dir_key = (
         "train_data_dir" if dataset_type == "train" else "test_data_dir"
     )
-    return ViNTDataset(
-        data_dir=resolve_path(dataset[data_dir_key], package_root()),
+    data_dir = resolve_path(dataset[data_dir_key], package_root())
+    common_args = dict(
+        data_dir=data_dir,
         image_size=dataset["image_size"],
         context_size=int(dataset["context_size"]),
         len_traj_pred=int(dataset["len_traj_pred"]),
         waypoint_spacing=int(dataset["waypoint_spacing"]),
+        metric_waypoint_spacing=float(dataset["metric_waypoint_spacing"]),
+        normalize=bool(dataset["normalize"]),
+        learn_angle=bool(dataset["learn_angle"]),
+    )
+    if model_type == "direction_vint":
+        return DirectionViNTDataset(
+            **common_args,
+            min_action_distance=int(dataset["min_action_distance"]),
+            max_action_distance=int(dataset["max_action_distance"]),
+        )
+    return ViNTDataset(
+        **common_args,
         min_goal_distance=int(dataset["min_goal_distance"]),
         max_goal_distance=int(dataset["max_goal_distance"]),
         min_action_distance=int(dataset["min_action_distance"]),
         max_action_distance=int(dataset["max_action_distance"]),
-        metric_waypoint_spacing=float(dataset["metric_waypoint_spacing"]),
-        normalize=bool(dataset["normalize"]),
-        learn_angle=bool(dataset["learn_angle"]),
         negative_mining=bool(dataset["negative_mining"]) if dataset_type == "train" else False,
     )
 
@@ -52,11 +63,26 @@ def dataset_name(data_dir):
     return directory_name
 
 
+def print_dataset_summary(dataset, dataset_type: str):
+    trajectory_names = list(getattr(dataset, "trajectory_names", []))
+    displayed_names = ",".join(trajectory_names[:5])
+    if len(trajectory_names) > 5:
+        displayed_names += ",..."
+    print(
+        f"loaded_dataset type={dataset_type} "
+        f"class={type(dataset).__name__} "
+        f"data_dir={dataset.data_dir} "
+        f"trajectories={len(trajectory_names)}[{displayed_names}] "
+        f"samples={len(dataset)}",
+        flush=True,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-dir", default=None)
     parser.add_argument("--use-test", choices=["true", "false"], default=None)
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
     cfg = load_runtime_config(args.config_dir)
     train_cfg = cfg["train"]
     model_cfg = dict(cfg["model"])
@@ -94,8 +120,20 @@ def main():
         pretrained_path = resolve_path(pretrained_checkpoint, package_root())
         if not os.path.isfile(pretrained_path):
             raise FileNotFoundError(pretrained_path)
-        load_model_weights(model, pretrained_path, device, strict=True)
-        print(f"loaded pretrained model from {pretrained_path}")
+        pretrained_load = training.get("pretrained_load", "full")
+        if pretrained_load == "full":
+            load_model_weights(model, pretrained_path, device, strict=True)
+            print(f"loaded pretrained model from {pretrained_path}")
+        elif pretrained_load == "obs_encoder":
+            loaded_keys = load_observation_encoder_weights(
+                model, pretrained_path, device
+            )
+            print(
+                f"loaded {len(loaded_keys)} observation encoder tensors "
+                f"from {pretrained_path}"
+            )
+        else:
+            raise ValueError(f"Unsupported pretrained_load: {pretrained_load}")
 
     frozen_modules = []
     if bool(training.get("freeze_encoder", False)):
@@ -127,8 +165,13 @@ def main():
     use_test = bool(training.get("use_test", True))
     if args.use_test is not None:
         use_test = args.use_test == "true"
-    train_dataset = make_dataset(train_cfg, "train")
-    validation_dataset = make_dataset(train_cfg, "test") if use_test else None
+    train_dataset = make_dataset(train_cfg, "train", model_cfg["model_type"])
+    validation_dataset = (
+        make_dataset(train_cfg, "test", model_cfg["model_type"]) if use_test else None
+    )
+    print_dataset_summary(train_dataset, "train")
+    if validation_dataset is not None:
+        print_dataset_summary(validation_dataset, "test")
     loader_args = {
         "batch_size": int(training["batch_size"]),
         "num_workers": int(training["num_workers"]),
