@@ -13,7 +13,7 @@ topomap:
   goal_node: -1
   search_radius: 4
   close_threshold: 3
-  sample_dt: 1.0
+  sample_dt: 5.0
   overwrite: true
 
 visualization:
