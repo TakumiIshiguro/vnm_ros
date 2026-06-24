@@ -56,10 +56,15 @@ def expand_model_config(model_cfg: Dict[str, Any]) -> Dict[str, Any]:
     if type_cfg is None:
         raise ValueError(f"model.yaml is missing a '{model_type}' section")
 
+    nested_sections = {
+        key
+        for key, value in model_cfg.items()
+        if isinstance(value, dict) and key not in ("common",)
+    }
     expanded = {
         key: value
         for key, value in model_cfg.items()
-        if key not in ("common", "vint", "nomad")
+        if key not in nested_sections and key != "common"
     }
     expanded.update(common_cfg)
     expanded.update(type_cfg)

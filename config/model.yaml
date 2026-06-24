@@ -1,6 +1,5 @@
-checkpoint_path: weights/nomad.pth
 device: auto
-model_type: nomad
+model_type: direction_vint
 
 common:
   obs_encoder: efficientnet-b0
@@ -15,6 +14,16 @@ vint:
   checkpoint_path: weights/vint.pth
   obs_encoding_size: 512
   late_fusion: false
+  context_size: 5
+  image_size: [85, 64]
+  len_traj_pred: 5
+  learn_angle: true
+
+direction_vint:
+  checkpoint_path: weights/best.pth
+  obs_encoding_size: 512
+  cmd_dir_dim: 3
+  cmd_hidden_size: 128
   context_size: 5
   image_size: [85, 64]
   len_traj_pred: 5

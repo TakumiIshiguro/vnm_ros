@@ -1,5 +1,6 @@
 from typing import List
 
+from vnm_ros.models.direction_inference import DirectionViNTInference
 from vnm_ros.models.model_loader import load_model
 from vnm_ros.models.nomad_inference import NoMaDInference
 from vnm_ros.models.vint_inference import ViNTInference
@@ -25,12 +26,17 @@ class VNMModel:
     def predict(self, context_images: List, goal_images: List):
         return self.inference.predict(context_images, goal_images)
 
+    def predict_direction(self, context_images: List, cmd_dir):
+        return self.inference.predict(context_images, cmd_dir)
+
     def scale_waypoint(self, waypoint, max_v: float, model_rate: float):
         return self.inference.scale_waypoint(waypoint, max_v, model_rate)
 
     def _build_inference(self):
         if self.model_type == "vint":
             return ViNTInference(self.model, self.config, self.device)
+        if self.model_type == "direction_vint":
+            return DirectionViNTInference(self.model, self.config, self.device)
         if self.model_type == "nomad":
             return NoMaDInference(self.model, self.config, self.device)
         raise ValueError(f"Unsupported model_type for inference: {self.model_type}")

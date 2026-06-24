@@ -1,5 +1,6 @@
 from typing import Callable, Dict
 
+from vnm_ros.models.direction_model import DirectionViNT
 from vnm_ros.models.nomad_model import (
     DenseNetwork,
     NoMaD,
@@ -43,17 +44,44 @@ def load_model_weights(model, checkpoint_path: str, device, strict: bool = True)
     return checkpoint
 
 
+def load_observation_encoder_weights(model, checkpoint_path: str, device):
+    import torch
+
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = checkpoint_state_dict(checkpoint)
+    if isinstance(state_dict, dict) and "ema_model" in state_dict:
+        state_dict = state_dict["ema_model"]
+
+    model_state = model.state_dict()
+    prefixes = ("obs_encoder.", "compress_obs_enc.")
+    selected = {
+        key: value
+        for key, value in state_dict.items()
+        if key.startswith(prefixes)
+        and key in model_state
+        and value.shape == model_state[key].shape
+    }
+    if not selected:
+        raise ValueError(
+            f"No observation encoder weights could be loaded from {checkpoint_path}"
+        )
+
+    model_state.update(selected)
+    model.load_state_dict(model_state, strict=True)
+    return sorted(selected)
+
+
 def freeze_image_encoders(model):
     encoders = []
     for name in ("obs_encoder", "goal_encoder"):
         encoder = getattr(model, name, None)
         if encoder is None:
-            raise AttributeError(
-                f"{type(model).__name__} does not have required image encoder: {name}"
-            )
+            continue
         encoder.requires_grad_(False)
         encoder.eval()
         encoders.append(encoder)
+    if not encoders:
+        raise AttributeError(f"{type(model).__name__} does not have image encoders")
     return encoders
 
 
@@ -65,6 +93,21 @@ def _build_vint(config: Dict):
         obs_encoder=config["obs_encoder"],
         obs_encoding_size=config["obs_encoding_size"],
         late_fusion=config["late_fusion"],
+        mha_num_attention_heads=config["mha_num_attention_heads"],
+        mha_num_attention_layers=config["mha_num_attention_layers"],
+        mha_ff_dim_factor=config["mha_ff_dim_factor"],
+    )
+
+
+def _build_direction_vint(config: Dict):
+    return DirectionViNT(
+        context_size=config["context_size"],
+        len_traj_pred=config["len_traj_pred"],
+        learn_angle=config["learn_angle"],
+        obs_encoder=config["obs_encoder"],
+        obs_encoding_size=config["obs_encoding_size"],
+        cmd_dir_dim=config.get("cmd_dir_dim", 3),
+        cmd_hidden_size=config.get("cmd_hidden_size", 128),
         mha_num_attention_heads=config["mha_num_attention_heads"],
         mha_num_attention_layers=config["mha_num_attention_layers"],
         mha_ff_dim_factor=config["mha_ff_dim_factor"],
@@ -95,6 +138,7 @@ def _build_nomad(config: Dict):
 
 
 register_model("vint", _build_vint)
+register_model("direction_vint", _build_direction_vint)
 register_model("nomad", _build_nomad)
 
 
