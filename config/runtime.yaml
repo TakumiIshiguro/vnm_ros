@@ -3,9 +3,10 @@ paths:
     topomap_dir: topomaps/topomap
 
 robot:
+  navigation_mode: explore
   model_rate: 4.0
   max_v: 0.2
-  max_w: 0.4
+  max_w: 0.6
   publish_cmd_vel: true
   publish_waypoint: true
 
@@ -25,3 +26,4 @@ visualization:
     loop: true
   overlay:
     rate: 10.0
+    image_size: [480, 480]

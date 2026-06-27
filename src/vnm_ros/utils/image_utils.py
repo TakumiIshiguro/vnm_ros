@@ -4,8 +4,6 @@ import numpy as np
 from PIL import Image as PILImage
 from sensor_msgs.msg import Image
 
-IMAGE_ASPECT_RATIO = 4 / 3
-
 
 def msg_to_pil(msg: Image) -> PILImage.Image:
     img = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
@@ -26,10 +24,9 @@ def pil_to_msg(pil_img: PILImage.Image, encoding: str = "rgb8") -> Image:
     return msg
 
 
-def transform_images(pil_imgs, image_size: List[int], center_crop: bool = False):
+def transform_images(pil_imgs, image_size: List[int]):
     import torch
     from torchvision import transforms
-    import torchvision.transforms.functional as TF
 
     if not isinstance(pil_imgs, list):
         pil_imgs = [pil_imgs]
@@ -47,12 +44,6 @@ def transform_images(pil_imgs, image_size: List[int], center_crop: bool = False)
     tensors = []
     for pil_img in pil_imgs:
         pil_img = pil_img.convert("RGB")
-        if center_crop:
-            w, h = pil_img.size
-            if w > h:
-                pil_img = TF.center_crop(pil_img, (h, int(h * IMAGE_ASPECT_RATIO)))
-            else:
-                pil_img = TF.center_crop(pil_img, (int(w / IMAGE_ASPECT_RATIO), w))
         tensors.append(torch.unsqueeze(transform(pil_img.resize(image_size)), 0))
     return torch.cat(tensors, dim=1)
 

@@ -9,7 +9,7 @@ common:
   mha_ff_dim_factor: 4
   context_type: temporal
   normalize: true
-  waypoint_index: 2
+  waypoint_index: 3
 
 vint:
   checkpoint_path: weights/vint.pth
@@ -30,8 +30,13 @@ nomad:
   cond_predict_scale: false
   down_dims: [64, 128, 256]
   num_diffusion_iters: 10
-  num_action_samples: 1
-  action_sample_strategy: first
+  num_action_samples: 8
+  action_noise_scale: 1.0
+  action_sample_strategy: cmd_dir
+  cmd_dir_target_angles_deg:
+    straight: 0.0
+    left: 30.0
+    right: -30.0
   action_stats:
     min: [-2.5, -4.0]
     max: [5.0, 4.0]

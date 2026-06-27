@@ -40,20 +40,54 @@ class NoMaDInference:
 
         return to_numpy(distances), to_numpy(waypoints)
 
+    def predict_explore(self, context_images: List):
+        import torch
+
+        obs_images = transform_images(context_images, self.config["image_size"]).to(
+            self.device
+        )
+        image_size = self.config["image_size"]
+        fake_goal = torch.randn((1, 3, image_size[1], image_size[0])).to(self.device)
+        goal_mask = torch.ones(1, dtype=torch.long, device=self.device)
+
+        with torch.no_grad():
+            obs_cond = self.model(
+                "vision_encoder",
+                obs_img=obs_images,
+                goal_img=fake_goal,
+                input_goal_mask=goal_mask,
+            )
+            actions = self._sample_actions_for_cond(
+                obs_cond, int(self.config.get("num_action_samples", 8))
+            )
+
+        return to_numpy(actions)
+
     def scale_waypoint(self, waypoint: np.ndarray, max_v: float, model_rate: float):
+        if self.config.get("normalize", False):
+            waypoint = waypoint.copy()
+            waypoint[..., :2] *= max_v / model_rate
         return waypoint
 
     def _sample_actions(self, obsgoal_cond):
-        import torch
-
-        scheduler = self._noise_scheduler()
         sample_count = int(self.config.get("num_action_samples", 1))
         horizon = int(self.config["len_traj_pred"])
         goal_count = obsgoal_cond.shape[0]
-        cond = obsgoal_cond.repeat_interleave(sample_count, dim=0)
-        action = torch.randn(
-            (goal_count * sample_count, horizon, 2), device=self.device
-        )
+        action = self._sample_actions_for_cond(obsgoal_cond, sample_count)
+        action = action.reshape(goal_count, sample_count, horizon, 2)
+        if self.config.get("action_sample_strategy", "first") == "mean":
+            return action.mean(dim=1)
+        return action[:, 0, :, :]
+
+    def _sample_actions_for_cond(self, obs_cond, sample_count: int):
+        import torch
+
+        scheduler = self._noise_scheduler()
+        horizon = int(self.config["len_traj_pred"])
+        cond = obs_cond.repeat_interleave(sample_count, dim=0)
+        noise_scale = float(self.config.get("action_noise_scale", 1.0))
+        action = torch.randn((cond.shape[0], horizon, 2), device=self.device)
+        action = action * noise_scale
         scheduler.set_timesteps(int(self.config.get("num_diffusion_iters", 10)))
         for timestep in scheduler.timesteps:
             noise_pred = self.model(
@@ -66,11 +100,7 @@ class NoMaDInference:
                 model_output=noise_pred, timestep=timestep, sample=action
             ).prev_sample
 
-        action = self._action_from_delta(action)
-        action = action.reshape(goal_count, sample_count, horizon, 2)
-        if self.config.get("action_sample_strategy", "first") == "mean":
-            return action.mean(dim=1)
-        return action[:, 0, :, :]
+        return self._action_from_delta(action)
 
     def _noise_scheduler(self):
         if self.noise_scheduler is not None:
