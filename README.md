@@ -64,6 +64,21 @@ Run navigation:
 roslaunch vnm_ros navigate.launch
 ```
 
+Set `robot.navigation_mode: explore` in `config/runtime.yaml` to run NoMaD in
+goal-masked exploration mode. In that mode `vnm_node.py` samples multiple NoMaD
+actions and selects the one closest to `cmd_dir` from `/cmd_dir_intersection`.
+Set `robot.navigation_mode: topomap` to use the original topomap subgoal flow.
+
+Publish manual direction commands from the keyboard:
+
+```bash
+roslaunch vnm_ros keyboard_cmd_dir.launch
+```
+
+Holding `a` publishes left, holding `d` publishes right, and no key publishes
+straight. The `hold_timeout` launch parameter controls how quickly the command
+returns to straight after key repeat stops.
+
 Run navigation with the camera/cmd_vel overlay viewer:
 
 ```bash
