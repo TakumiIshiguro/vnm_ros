@@ -1,0 +1,8 @@
+<launch>
+  <node pkg="vnm_ros" type="keyboard_cmd_dir.py"
+        name="vnm_keyboard_cmd_dir" output="screen" required="true">
+    <param name="config_dir" value="$(find vnm_ros)/config"/>
+    <param name="rate" value="10.0"/>
+    <param name="hold_timeout" value="0.35"/>
+  </node>
+</launch>
