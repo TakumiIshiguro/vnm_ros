@@ -1,31 +1,29 @@
 #!/usr/bin/env python3
-import math
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import rospy
-from geometry_msgs.msg import Twist
 from PIL import ImageDraw
 from sensor_msgs.msg import Image
+from std_msgs.msg import Float32MultiArray
 
 from vnm_ros.utils.config import load_runtime_config
 from vnm_ros.utils.image_utils import msg_to_pil, pil_to_msg
 
 camera_image = None
-cmd_vel = None
 subgoal_image = None
+action_candidates = None
+camera_image_size = None
 
 
 def camera_callback(msg: Image):
     global camera_image
-    camera_image = msg_to_pil(msg).convert("RGB")
-
-
-def cmd_vel_callback(msg: Twist):
-    global cmd_vel
-    cmd_vel = msg
+    image = msg_to_pil(msg).convert("RGB")
+    if camera_image_size is not None:
+        image = image.resize(camera_image_size)
+    camera_image = image
 
 
 def subgoal_callback(msg: Image):
@@ -33,50 +31,110 @@ def subgoal_callback(msg: Image):
     subgoal_image = msg_to_pil(msg).convert("RGB")
 
 
-def draw_cmd_vel(draw: ImageDraw.ImageDraw, image_size, cmd, max_v, max_w):
-    width, height = image_size
-    origin = (width // 2, int(height * 0.90))
-    max_len = int(height * 0.34)
-    max_side = int(width * 0.28)
+def action_candidates_callback(msg: Float32MultiArray):
+    global action_candidates
+    action_candidates = decode_action_candidates(msg.data)
 
-    if cmd is None:
-        draw.text((12, height - 34), "waiting for cmd_vel", fill=(255, 230, 80))
+
+def decode_action_candidates(data):
+    if len(data) < 5:
+        return None
+    selected = int(data[0])
+    waypoint_index = int(data[1])
+    sample_count = int(data[2])
+    horizon = int(data[3])
+    dims = int(data[4])
+    expected = 5 + sample_count * horizon * dims
+    if sample_count <= 0 or horizon <= 0 or dims < 2 or len(data) < expected:
+        return None
+
+    values = data[5:expected]
+    actions = []
+    offset = 0
+    for _ in range(sample_count):
+        sample = []
+        for _ in range(horizon):
+            sample.append(values[offset : offset + dims])
+            offset += dims
+        actions.append(sample)
+    return {
+        "selected": max(0, min(selected, sample_count - 1)),
+        "waypoint_index": max(0, min(waypoint_index, horizon - 1)),
+        "actions": actions,
+    }
+
+
+def draw_action_candidates(draw: ImageDraw.ImageDraw, image_size, candidates):
+    if candidates is None:
         return
 
-    v = float(cmd.linear.x)
-    w = float(cmd.angular.z)
-    v_ratio = 0.0 if max_v <= 0 else max(-1.0, min(1.0, v / max_v))
-    w_ratio = 0.0 if max_w <= 0 else max(-1.0, min(1.0, w / max_w))
+    width, height = image_size
+    origin = (width // 2, int(height * 0.92))
+    actions = candidates["actions"]
+    selected = candidates["selected"]
+    waypoint_index = candidates["waypoint_index"]
 
-    arrow_len = max(18, int(abs(v_ratio) * max_len))
-    if abs(v) < 1e-4:
-        arrow_len = 34
+    max_extent = 0.0
+    for sample in actions:
+        for waypoint in sample:
+            max_extent = max(max_extent, abs(float(waypoint[0])), abs(float(waypoint[1])))
+    if max_extent < 1e-6:
+        return
 
-    # Robot-view convention: positive angular.z turns left, so draw it to image-left.
-    lateral = int(-w_ratio * max_side)
-    direction = -1 if v >= 0 else 1
-    end = (
-        max(0, min(width - 1, origin[0] + lateral)),
-        max(0, min(height - 1, origin[1] + direction * arrow_len)),
+    scale = min(width * 0.34, height * 0.38) / max_extent
+
+    def point(waypoint):
+        x = float(waypoint[0])
+        y = float(waypoint[1])
+        return (
+            int(max(0, min(width - 1, origin[0] - y * scale))),
+            int(max(0, min(height - 1, origin[1] - x * scale))),
+        )
+
+    draw.ellipse(
+        (origin[0] - 5, origin[1] - 5, origin[0] + 5, origin[1] + 5),
+        fill=(255, 255, 255),
+        outline=(0, 0, 0),
     )
 
-    draw.line([origin, end], fill=(0, 255, 90), width=6)
+    for index, sample in enumerate(actions):
+        points = [point(waypoint) for waypoint in sample]
+        if len(points) < 2:
+            continue
+        if index == selected:
+            continue
+        draw.line(points, fill=(80, 170, 255), width=2)
+        draw.ellipse(
+            (
+                points[-1][0] - 3,
+                points[-1][1] - 3,
+                points[-1][0] + 3,
+                points[-1][1] + 3,
+            ),
+            fill=(80, 170, 255),
+        )
 
-    angle = math.atan2(end[1] - origin[1], end[0] - origin[0])
-    head_len = 18
-    head_angle = 0.55
-    left = (
-        int(end[0] - head_len * math.cos(angle - head_angle)),
-        int(end[1] - head_len * math.sin(angle - head_angle)),
+    selected_points = [point(waypoint) for waypoint in actions[selected]]
+    if len(selected_points) >= 2:
+        draw.line(selected_points, fill=(0, 0, 0), width=8)
+        draw.line(selected_points, fill=(255, 220, 40), width=5)
+    selected_waypoint = selected_points[waypoint_index]
+    draw.ellipse(
+        (
+            selected_waypoint[0] - 8,
+            selected_waypoint[1] - 8,
+            selected_waypoint[0] + 8,
+            selected_waypoint[1] + 8,
+        ),
+        fill=(255, 80, 40),
+        outline=(0, 0, 0),
+        width=2,
     )
-    right = (
-        int(end[0] - head_len * math.cos(angle + head_angle)),
-        int(end[1] - head_len * math.sin(angle + head_angle)),
+    draw.text(
+        (12, 12),
+        f"actions  selected={selected}  candidates={len(actions)}",
+        fill=(0, 0, 0),
     )
-    draw.polygon([end, left, right], fill=(0, 255, 90))
-    draw.ellipse((origin[0] - 7, origin[1] - 7, origin[0] + 7, origin[1] + 7), fill=(80, 180, 255))
-
-    draw.text((12, height - 34), f"cmd_vel  v={v:.3f} m/s  w={w:.3f} rad/s", fill=(0, 0, 0))
 
 
 def paste_subgoal(base, subgoal):
@@ -100,12 +158,20 @@ def main():
     config_dir = rospy.get_param("~config_dir", None)
     cfg = load_runtime_config(config_dir)
     topics = cfg["topics"]
-    robot = cfg["robot"]
     overlay_cfg = cfg["visualization"]["overlay"]
+    model_cfg = cfg["model"]
+
+    global camera_image_size
+    camera_image_size = tuple(overlay_cfg.get("image_size", model_cfg["image_size"]))
 
     rospy.Subscriber(topics["image_topic"], Image, camera_callback, queue_size=1)
-    rospy.Subscriber(topics["cmd_vel_debug_topic"], Twist, cmd_vel_callback, queue_size=1)
     rospy.Subscriber(topics["topomap_image_topic"], Image, subgoal_callback, queue_size=1)
+    rospy.Subscriber(
+        topics.get("action_candidates_topic", "/vnm/action_candidates"),
+        Float32MultiArray,
+        action_candidates_callback,
+        queue_size=1,
+    )
     pub = rospy.Publisher(topics["annotated_image_topic"], Image, queue_size=1)
 
     rate = rospy.Rate(float(overlay_cfg["rate"]))
@@ -113,13 +179,7 @@ def main():
         if camera_image is not None:
             annotated = camera_image.copy()
             draw = ImageDraw.Draw(annotated)
-            draw_cmd_vel(
-                draw,
-                annotated.size,
-                cmd_vel,
-                max_v=float(robot["max_v"]),
-                max_w=float(robot["max_w"]),
-            )
+            draw_action_candidates(draw, annotated.size, action_candidates)
             paste_subgoal(annotated, subgoal_image)
             pub.publish(pil_to_msg(annotated))
         rate.sleep()
