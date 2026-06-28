@@ -77,9 +77,11 @@ def main():
 
     positions = []
     yaws = []
+    cmd_dirs = []
     sample_dt = float(collection_cfg["sample_dt"])
     last_saved = float("-inf")
     image_topic = topics["image_topic"]
+    cmd_dir_topic = topics.get("cmd_dir_topic")
     pose_source, pose_topic = pose_input(collection_cfg, topics)
 
     def finalize():
@@ -91,6 +93,7 @@ def main():
                 {
                     "position": np.asarray(positions, dtype=np.float32),
                     "yaw": np.asarray(yaws, dtype=np.float32),
+                    "cmd_dir": np.asarray(cmd_dirs, dtype=np.float32),
                 },
                 f,
             )
@@ -103,6 +106,7 @@ def main():
 
     current_position = None
     current_yaw = None
+    current_cmd_dir = np.array([1.0, 0.0, 0.0], dtype=np.float32)
     extension = collection_cfg.get("image_format", "jpg")
     info(
         f"creating {dataset_type} trajectory {name} every "
@@ -110,12 +114,16 @@ def main():
         f"{pose_source} pose {pose_topic}"
     )
     with rosbag.Bag(bag_path, "r") as bag:
-        for topic, msg, bag_time in bag.read_messages(
-            topics=[image_topic, pose_topic]
-        ):
+        bag_topics = [image_topic, pose_topic]
+        if cmd_dir_topic:
+            bag_topics.append(cmd_dir_topic)
+        for topic, msg, bag_time in bag.read_messages(topics=bag_topics):
             msg_time = stamp_to_sec(msg, bag_time)
             if topic == pose_topic:
                 current_position, current_yaw = pose_message_to_xy_yaw(msg)
+                continue
+            if topic == cmd_dir_topic:
+                current_cmd_dir = np.asarray(msg.cmd_dir[:3], dtype=np.float32)
                 continue
             if current_position is None or current_yaw is None:
                 continue
@@ -126,6 +134,7 @@ def main():
             image.save(os.path.join(trajectory_dir, f"{index}.{extension}"))
             positions.append(current_position.copy())
             yaws.append(float(current_yaw))
+            cmd_dirs.append(current_cmd_dir.copy())
             last_saved = msg_time
             info(f"saved sample {index}")
     finalize()

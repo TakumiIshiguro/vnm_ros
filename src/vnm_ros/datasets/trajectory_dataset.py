@@ -48,6 +48,11 @@ class TrajectoryDataset(Dataset):
                 data = pickle.load(f)
             data["position"] = np.asarray(data["position"], dtype=np.float32)
             data["yaw"] = np.asarray(data["yaw"], dtype=np.float32).reshape(-1)
+            if "cmd_dir" in data:
+                data["cmd_dir"] = np.asarray(data["cmd_dir"], dtype=np.float32)
+            else:
+                straight = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+                data["cmd_dir"] = np.tile(straight, (len(data["position"]), 1))
             self._trajectories[name] = data
         return self._trajectories[name]
 

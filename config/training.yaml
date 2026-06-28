@@ -3,7 +3,7 @@ device: auto
 
 paths:
   rosbag:
-    path: "/home/takumi/bags/dataset.bag"
+    path: "/home/takumi/bags/sim.bag"
   dataset:
     train_data_dir: dataset/my_dataset/train
     test_data_dir: dataset/my_dataset/test
@@ -30,7 +30,7 @@ collection:
   image_format: jpg
 
 training:
-  pretrained_checkpoint: weights/vint.pth
+  pretrained_weights_path: weights/nomad.pth
   freeze_encoder: true
   use_test: false
   tensorboard: true
