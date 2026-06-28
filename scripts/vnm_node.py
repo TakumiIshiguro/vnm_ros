@@ -64,7 +64,7 @@ def main():
 
     image_sub = ImageContextSubscriber(topics["image_topic"], model.context_size)
     action_selector = CmdDirActionSelector(
-        target_angles_deg=model_cfg.get("cmd_dir_target_angles_deg", {})
+        theta_threshold_deg=float(model_cfg.get("cmd_dir_theta_threshold_deg", 15.0))
     )
     if navigation_mode == "explore" and use_cmd_dir:
         rospy.Subscriber(
@@ -99,7 +99,10 @@ def main():
     if navigation_mode == "explore":
         info(f"action_sample_strategy={action_sample_strategy}")
         if use_cmd_dir:
-            info(f"cmd_dir_target_angles_deg={model_cfg.get('cmd_dir_target_angles_deg', {})}")
+            info(
+                f"cmd_dir_theta_threshold_deg="
+                f"{model_cfg.get('cmd_dir_theta_threshold_deg', 15.0)}"
+            )
     if topo is not None:
         info(f"loaded topomap {topomap_dir} with {len(topo)} nodes")
         info(f"goal_node={goal_node}")
@@ -112,7 +115,8 @@ def main():
 
         if image_sub.ready() and not reached:
             if navigation_mode == "explore":
-                actions = model.predict_explore(image_sub.context())
+                cmd_dir = action_selector.cmd_dir if use_cmd_dir else None
+                actions = model.predict_explore(image_sub.context(), cmd_dir=cmd_dir)
                 if use_cmd_dir:
                     waypoint = action_selector.select(actions, waypoint_index)
                     selected_action = action_selector.selected_action
@@ -145,7 +149,7 @@ def main():
                     info(
                         f"target_dir={action_selector.target_name} "
                         f"mode=explore selected_sample={selected_sample} "
-                        f"target_angle={action_selector.target_angle} "
+                        f"theta={action_selector.selected_theta} "
                         f"score={action_selector.selected_score} "
                         f"waypoint=({float(waypoint[0]):.3f},{float(waypoint[1]):.3f})"
                     )

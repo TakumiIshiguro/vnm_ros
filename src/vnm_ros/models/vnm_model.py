@@ -25,10 +25,10 @@ class VNMModel:
     def predict(self, context_images: List, goal_images: List):
         return self.inference.predict(context_images, goal_images)
 
-    def predict_explore(self, context_images: List):
+    def predict_explore(self, context_images: List, cmd_dir=None):
         if not hasattr(self.inference, "predict_explore"):
             raise ValueError(f"{self.model_type} does not support exploration inference")
-        return self.inference.predict_explore(context_images)
+        return self.inference.predict_explore(context_images, cmd_dir=cmd_dir)
 
     def scale_waypoint(self, waypoint, max_v: float, model_rate: float):
         return self.inference.scale_waypoint(waypoint, max_v, model_rate)

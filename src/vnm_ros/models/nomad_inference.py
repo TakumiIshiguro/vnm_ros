@@ -40,7 +40,7 @@ class NoMaDInference:
 
         return to_numpy(distances), to_numpy(waypoints)
 
-    def predict_explore(self, context_images: List):
+    def predict_explore(self, context_images: List, cmd_dir=None):
         import torch
 
         obs_images = transform_images(context_images, self.config["image_size"]).to(
@@ -57,6 +57,7 @@ class NoMaDInference:
                 goal_img=fake_goal,
                 input_goal_mask=goal_mask,
             )
+            obs_cond = self._condition_direction(obs_cond, cmd_dir)
             actions = self._sample_actions_for_cond(
                 obs_cond, int(self.config.get("num_action_samples", 8))
             )
@@ -101,6 +102,22 @@ class NoMaDInference:
             ).prev_sample
 
         return self._action_from_delta(action)
+
+    def _condition_direction(self, obs_cond, cmd_dir):
+        import torch
+
+        if not self.config.get("direction_conditioning", False):
+            return obs_cond
+        if cmd_dir is None:
+            cmd_dir = [1.0, 0.0, 0.0]
+        cmd_dir_tensor = torch.as_tensor(
+            cmd_dir, dtype=obs_cond.dtype, device=obs_cond.device
+        ).reshape(1, -1)
+        return self.model(
+            "condition_direction",
+            obsgoal_cond=obs_cond,
+            cmd_dir=cmd_dir_tensor,
+        )
 
     def _noise_scheduler(self):
         if self.noise_scheduler is not None:

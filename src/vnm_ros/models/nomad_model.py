@@ -18,11 +18,12 @@ from vnm_ros.models.self_attention import PositionalEncoding
 
 
 class NoMaD(nn.Module):
-    def __init__(self, vision_encoder, noise_pred_net, dist_pred_net):
+    def __init__(self, vision_encoder, noise_pred_net, dist_pred_net, direction_encoder=None):
         super().__init__()
         self.vision_encoder = vision_encoder
         self.noise_pred_net = noise_pred_net
         self.dist_pred_net = dist_pred_net
+        self.direction_encoder = direction_encoder
 
     def forward(self, func_name, **kwargs):
         if func_name == "vision_encoder":
@@ -39,6 +40,11 @@ class NoMaD(nn.Module):
             )
         if func_name == "dist_pred_net":
             return self.dist_pred_net(kwargs["obsgoal_cond"])
+        if func_name == "condition_direction":
+            cond = kwargs["obsgoal_cond"]
+            if self.direction_encoder is None or kwargs.get("cmd_dir") is None:
+                return cond
+            return cond + self.direction_encoder(kwargs["cmd_dir"].to(cond.device).float())
         raise NotImplementedError(f"Unsupported NoMaD function: {func_name}")
 
 
@@ -56,6 +62,19 @@ class DenseNetwork(nn.Module):
 
     def forward(self, x):
         return self.network(x.reshape((-1, self.embedding_dim)))
+
+
+class DirectionEncoder(nn.Module):
+    def __init__(self, embedding_dim: int, input_dim: int = 3, hidden_dim: int = 64):
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, embedding_dim),
+        )
+
+    def forward(self, cmd_dir):
+        return self.network(cmd_dir)
 
 
 class NoMaDViNT(nn.Module):

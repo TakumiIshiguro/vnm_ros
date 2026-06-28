@@ -1,4 +1,3 @@
-checkpoint_path: weights/nomad.pth
 device: auto
 model_type: nomad
 
@@ -21,22 +20,22 @@ vint:
   learn_angle: true
 
 nomad:
-  checkpoint_path: weights/nomad.pth
+  checkpoint_path: weights/best.pth
   encoding_size: 256
   context_size: 3
   image_size: [96, 96]
   len_traj_pred: 8
+  normalize: false
   learn_angle: false
   cond_predict_scale: false
   down_dims: [64, 128, 256]
+  direction_conditioning: true
+  direction_hidden_dim: 64
   num_diffusion_iters: 10
   num_action_samples: 8
   action_noise_scale: 1.0
   action_sample_strategy: cmd_dir
-  cmd_dir_target_angles_deg:
-    straight: 0.0
-    left: 30.0
-    right: -30.0
+  cmd_dir_theta_threshold_deg: 15.0
   action_stats:
     min: [-2.5, -4.0]
     max: [5.0, 4.0]

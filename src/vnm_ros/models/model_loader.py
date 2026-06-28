@@ -2,6 +2,7 @@ from typing import Callable, Dict
 
 from vnm_ros.models.nomad_model import (
     DenseNetwork,
+    DirectionEncoder,
     NoMaD,
     NoMaDViNT,
     build_conditional_unet1d,
@@ -87,10 +88,18 @@ def _build_nomad(config: Dict):
         down_dims=config.get("down_dims", [64, 128, 256]),
         cond_predict_scale=bool(config.get("cond_predict_scale", False)),
     )
+    direction_encoder = None
+    if bool(config.get("direction_conditioning", False)):
+        direction_encoder = DirectionEncoder(
+            embedding_dim=encoding_size,
+            input_dim=int(config.get("direction_input_dim", 3)),
+            hidden_dim=int(config.get("direction_hidden_dim", 64)),
+        )
     return NoMaD(
         vision_encoder=vision_encoder,
         noise_pred_net=noise_pred_net,
         dist_pred_net=DenseNetwork(embedding_dim=encoding_size),
+        direction_encoder=direction_encoder,
     )
 
 

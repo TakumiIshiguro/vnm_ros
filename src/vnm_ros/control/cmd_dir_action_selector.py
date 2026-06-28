@@ -4,11 +4,6 @@ import numpy as np
 
 
 EPS = 1e-8
-DEFAULT_TARGET_ANGLES_DEG = {
-    "straight": 0.0,
-    "left": 45.0,
-    "right": -45.0,
-}
 TARGET_NAMES = {
     0: "straight",
     1: "left",
@@ -21,11 +16,12 @@ def clip_angle(theta: np.ndarray) -> np.ndarray:
 
 
 class CmdDirActionSelector:
-    def __init__(self, target_angles_deg=None):
-        self.target_angles = self._target_angles(target_angles_deg or {})
+    def __init__(self, theta_threshold_deg: float = 15.0):
+        self.theta_threshold = np.deg2rad(float(theta_threshold_deg))
         self.cmd_dir: Optional[np.ndarray] = None
         self.selected_sample = 0
         self.target_angle: Optional[float] = None
+        self.selected_theta: Optional[float] = None
         self.target_name = "none"
         self.selected_score: Optional[float] = None
         self.selected_action: Optional[np.ndarray] = None
@@ -47,45 +43,50 @@ class CmdDirActionSelector:
         if target_angle is None:
             self.selected_sample = 0
             self.target_angle = None
+            self.selected_theta = None
             self.target_name = "none"
             self.selected_score = None
             self.selected_action = actions[0]
             return actions[0, waypoint_index]
 
-        waypoints = actions[:, waypoint_index, :2]
-        norms = np.linalg.norm(waypoints, axis=1)
-        valid = norms > EPS
-        if not np.any(valid):
+        cluster_indices, thetas = self._cluster_indices(actions)
+        if cluster_indices.size == 0:
             self.selected_sample = 0
             self.target_angle = target_angle
+            self.selected_theta = None
             self.selected_score = None
             self.selected_action = actions[0]
             return actions[0, waypoint_index]
 
-        self.selected_sample = self._select_angle_sample(waypoints, valid, target_angle)
+        self.selected_sample, self.selected_score = self._medoid(actions, cluster_indices)
         self.target_angle = target_angle
-        self.selected_score = float(
-            abs(
-                clip_angle(
-                    np.arctan2(
-                        waypoints[self.selected_sample, 1],
-                        waypoints[self.selected_sample, 0],
-                    )
-                    - target_angle
-                )
-            )
-        )
+        self.selected_theta = float(thetas[self.selected_sample])
         self.selected_action = actions[self.selected_sample]
         return actions[self.selected_sample, waypoint_index]
 
-    def _select_angle_sample(
-        self, waypoints: np.ndarray, valid: np.ndarray, target_angle: float
-    ) -> int:
-        angles = np.arctan2(waypoints[:, 1], waypoints[:, 0])
-        scores = np.abs(clip_angle(angles - target_angle))
-        scores = scores.astype(np.float64)
-        scores[~valid] = np.inf
-        return int(np.argmin(scores))
+    def _cluster_indices(self, actions: np.ndarray):
+        thetas = self._trajectory_thetas(actions)
+        if self.target_name == "left":
+            mask = thetas > self.theta_threshold
+        elif self.target_name == "right":
+            mask = thetas < -self.theta_threshold
+        else:
+            mask = np.abs(thetas) <= self.theta_threshold
+        return np.flatnonzero(mask), thetas
+
+    def _trajectory_thetas(self, actions: np.ndarray) -> np.ndarray:
+        angles = np.arctan2(actions[:, :, 1], actions[:, :, 0])
+        sin_mean = np.mean(np.sin(angles), axis=1)
+        cos_mean = np.mean(np.cos(angles), axis=1)
+        return np.arctan2(sin_mean, cos_mean)
+
+    def _medoid(self, actions: np.ndarray, indices: np.ndarray):
+        cluster = actions[indices, :, :2]
+        deltas = cluster[:, np.newaxis, :, :] - cluster[np.newaxis, :, :, :]
+        distances = np.linalg.norm(deltas, axis=-1).mean(axis=-1)
+        costs = distances.sum(axis=1)
+        local_index = int(np.argmin(costs))
+        return int(indices[local_index]), float(costs[local_index])
 
     def _target_angle(self):
         if self.cmd_dir is None or self.cmd_dir.size < 3:
@@ -97,12 +98,4 @@ class CmdDirActionSelector:
             return None
         index = int(active[0])
         self.target_name = TARGET_NAMES.get(index, "none")
-        return self.target_angles.get(self.target_name)
-
-    def _target_angles(self, target_angles_deg):
-        angles = DEFAULT_TARGET_ANGLES_DEG.copy()
-        angles.update(target_angles_deg)
-        return {
-            name: np.deg2rad(float(angle_deg))
-            for name, angle_deg in angles.items()
-        }
+        return 0.0
