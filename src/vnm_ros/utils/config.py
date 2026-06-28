@@ -51,10 +51,20 @@ def apply_shared_paths(config: Dict[str, Dict[str, Any]]) -> None:
 
 def expand_model_config(model_cfg: Dict[str, Any]) -> Dict[str, Any]:
     model_type = model_cfg["model_type"]
+    if "checkpoint_path" in model_cfg:
+        raise ValueError(
+            "model.yaml top-level checkpoint_path is no longer supported. "
+            "Set checkpoint_path only under the selected model section, "
+            f"for example '{model_type}: checkpoint_path: ...'."
+        )
     common_cfg = model_cfg.get("common", {})
     type_cfg = model_cfg.get(model_type)
     if type_cfg is None:
         raise ValueError(f"model.yaml is missing a '{model_type}' section")
+    if not type_cfg.get("checkpoint_path"):
+        raise ValueError(
+            f"model.yaml section '{model_type}' must define checkpoint_path"
+        )
 
     expanded = {
         key: value

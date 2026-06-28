@@ -12,9 +12,11 @@
 
 | パラメータ | 意味 |
 | --- | --- |
-| `checkpoint_path` | 読み込むモデル重みの共通デフォルトです。モデル専用セクションの値が優先されます。 |
 | `device` | 実行デバイスです。`auto` はCUDAが利用可能ならGPU、それ以外はCPUを使用します。 |
 | `model_type` | 構築するモデル形式です。`vint` または `nomad` を指定します。 |
+
+推論で読み込む重みは、選択中モデルのセクション内 `checkpoint_path` で指定します。
+例えば `model_type: nomad` の場合は `nomad.checkpoint_path` が推論時に使われます。
 
 ### common
 
@@ -55,19 +57,23 @@ NoMaD専用、またはNoMaD checkpointに合わせる設定です。
 | `context_size` | 現在画像より前に使う画像枚数です。 |
 | `image_size` | モデル入力画像の `[幅, 高さ]` です。 |
 | `len_traj_pred` | モデルが予測する将来Waypoint数です。 |
+| `normalize` | NoMaDでは通常 `false` です。NoMaD出力は `action_stats` で正規化解除されるため、`true` にすると追加で `max_v / model_rate` 倍されて低速になります。 |
 | `learn_angle` | NoMaDでは通常 `false` です。 |
 | `down_dims` | NoMaD diffusion U-Netの各段の次元数です。 |
 | `cond_predict_scale` | NoMaD diffusion U-Netで条件付きscale予測を使うかを指定します。 |
+| `direction_conditioning` | `true` の場合、NoMaD条件ベクトルへ `cmd_dir` 方向エンコーダの出力を加算します。 |
+| `direction_hidden_dim` | `cmd_dir` 方向エンコーダMLPの隠れ層次元数です。 |
 | `num_diffusion_iters` | NoMaD推論時の逆拡散ステップ数です。 |
 | `num_action_samples` | NoMaDでゴール候補ごとにサンプルするAction数です。 |
 | `action_noise_scale` | NoMaD diffusionの初期ノイズ倍率です。`1.0` が標準で、大きくすると候補のばらつきが増えます。 |
-| `action_sample_strategy` | 複数Actionサンプルの選び方です。`first`、`mean`、または探索モード用の `cmd_dir` を指定します。探索モードで `cmd_dir` の場合、`cmd_dir_target_angles_deg` の目標角度に近い候補を選びます。`first` の場合はdirectionなしで先頭サンプルを使います。 |
-| `cmd_dir_target_angles_deg` | `action_sample_strategy: cmd_dir` で使う目標角度 `[deg]` です。`straight`、`left`、`right` を指定できます。 |
+| `action_sample_strategy` | 複数Actionサンプルの選び方です。`first`、`mean`、または探索モード用の `cmd_dir` を指定します。探索モードで `cmd_dir` の場合、各候補軌道の円周平均角を `cmd_dir_theta_threshold_deg` でleft/straight/rightへ分け、目標方向クラスタのmedoidを選びます。`first` の場合はdirectionなしで先頭サンプルを使います。 |
+| `cmd_dir_theta_threshold_deg` | `action_sample_strategy: cmd_dir` で候補軌道をleft/straight/rightに分ける代表方向角の閾値 `[deg]` です。 |
 | `action_stats` | NoMaDの正規化済みActionを実Actionへ戻すためのmin/maxです。 |
 
 NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`、
-`diffusion_policy` とその依存パッケージが必要です。現在の `scripts/train.py`
-はViNT用の教師あり学習ループで、NoMaDのdiffusion学習には対応していません。
+`diffusion_policy` とその依存パッケージが必要です。`scripts/train.py` は
+`direction_conditioning: true` のNoMaDに対して、収録済み `cmd_dir` ラベルを
+使ったdiffusion fine-tuningに対応しています。
 
 ## topics.yaml
 
@@ -178,11 +184,16 @@ Dataset作成、ViNT学習、評価をまとめます。
 | `sample_dt` | Datasetへ画像と選択した姿勢情報を保存する時間間隔 `[s]` です。 |
 | `image_format` | 保存画像の拡張子です。例: `jpg`、`png`。 |
 
+Dataset作成時に `cmd_dir_topic` がbagに含まれている場合、各保存サンプルへ
+最新の `cmd_dir` one-hotラベルも保存します。NoMaD方向fine-tuningではこの
+保存済みラベルを使用します。未収録データは互換性のためstraight `[1, 0, 0]`
+として扱われます。
+
 ### training
 
 | パラメータ | 意味 |
 | --- | --- |
-| `pretrained_checkpoint` | 新規学習時に初期重みとして読み込むチェックポイントです。 |
+| `pretrained_weights_path` | 新規学習時に初期重みとして読み込む事前学習済みモデルです。空文字の場合は初期重みを読み込みません。 |
 | `freeze_encoder` | `true` の場合、画像Encoderを固定して学習します。 |
 | `use_test` | `true` の場合、各epochでtest Datasetを評価します。 |
 | `tensorboard` | TensorBoardログを保存するかを指定します。 |
@@ -195,3 +206,7 @@ Dataset作成、ViNT学習、評価をまとめます。
 | `gradient_clip` | 勾配ノルムの最大値です。0以下にするとクリッピングしません。 |
 | `scheduler` | 学習率Schedulerです。`cosine` の場合にCosine Annealingを使用します。 |
 | `resume` | 学習を再開するチェックポイントのパスです。空文字なら新規学習です。 |
+
+新規学習時の初期重みは `pretrained_weights_path` を使用します。
+推論用の重みは `model.yaml` の `checkpoint_path` で別に指定します。
+学習再開時は `resume` が優先され、`pretrained_weights_path` は読み込みません。
