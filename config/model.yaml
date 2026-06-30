@@ -21,6 +21,7 @@ vint:
 
 nomad:
   checkpoint_path: weights/best.pth
+  # checkpoint_path: weights/nomad.pth
   encoding_size: 256
   context_size: 3
   image_size: [96, 96]
@@ -34,7 +35,7 @@ nomad:
   num_diffusion_iters: 10
   num_action_samples: 8
   action_noise_scale: 1.0
-  action_sample_strategy: cmd_dir
+  action_sample_strategy: mean
   cmd_dir_theta_threshold_deg: 15.0
   action_stats:
     min: [-2.5, -4.0]

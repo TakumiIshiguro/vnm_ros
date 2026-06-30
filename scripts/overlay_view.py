@@ -15,6 +15,7 @@ from vnm_ros.utils.image_utils import msg_to_pil, pil_to_msg
 camera_image = None
 subgoal_image = None
 action_candidates = None
+current_waypoint = None
 camera_image_size = None
 
 
@@ -34,6 +35,14 @@ def subgoal_callback(msg: Image):
 def action_candidates_callback(msg: Float32MultiArray):
     global action_candidates
     action_candidates = decode_action_candidates(msg.data)
+
+
+def waypoint_callback(msg: Float32MultiArray):
+    global current_waypoint
+    if len(msg.data) >= 2:
+        current_waypoint = [float(msg.data[0]), float(msg.data[1])]
+    else:
+        current_waypoint = None
 
 
 def decode_action_candidates(data):
@@ -64,7 +73,17 @@ def decode_action_candidates(data):
     }
 
 
-def draw_action_candidates(draw: ImageDraw.ImageDraw, image_size, candidates):
+def image_point(waypoint, image_size, scale, origin):
+    width, height = image_size
+    x = float(waypoint[0])
+    y = float(waypoint[1])
+    return (
+        int(max(0, min(width - 1, origin[0] - y * scale))),
+        int(max(0, min(height - 1, origin[1] - x * scale))),
+    )
+
+
+def draw_action_candidates(draw: ImageDraw.ImageDraw, image_size, candidates, waypoint):
     if candidates is None:
         return
 
@@ -84,12 +103,7 @@ def draw_action_candidates(draw: ImageDraw.ImageDraw, image_size, candidates):
     scale = min(width * 0.34, height * 0.38) / max_extent
 
     def point(waypoint):
-        x = float(waypoint[0])
-        y = float(waypoint[1])
-        return (
-            int(max(0, min(width - 1, origin[0] - y * scale))),
-            int(max(0, min(height - 1, origin[1] - x * scale))),
-        )
+        return image_point(waypoint, image_size, scale, origin)
 
     draw.ellipse(
         (origin[0] - 5, origin[1] - 5, origin[0] + 5, origin[1] + 5),
@@ -130,6 +144,19 @@ def draw_action_candidates(draw: ImageDraw.ImageDraw, image_size, candidates):
         outline=(0, 0, 0),
         width=2,
     )
+    if waypoint is not None:
+        published_waypoint = point(waypoint)
+        draw.ellipse(
+            (
+                published_waypoint[0] - 5,
+                published_waypoint[1] - 5,
+                published_waypoint[0] + 5,
+                published_waypoint[1] + 5,
+            ),
+            fill=(255, 255, 255),
+            outline=(0, 0, 0),
+            width=2,
+        )
     draw.text(
         (12, 12),
         f"actions  selected={selected}  candidates={len(actions)}",
@@ -172,6 +199,7 @@ def main():
         action_candidates_callback,
         queue_size=1,
     )
+    rospy.Subscriber(topics["waypoint_topic"], Float32MultiArray, waypoint_callback, queue_size=1)
     pub = rospy.Publisher(topics["annotated_image_topic"], Image, queue_size=1)
 
     rate = rospy.Rate(float(overlay_cfg["rate"]))
@@ -179,7 +207,7 @@ def main():
         if camera_image is not None:
             annotated = camera_image.copy()
             draw = ImageDraw.Draw(annotated)
-            draw_action_candidates(draw, annotated.size, action_candidates)
+            draw_action_candidates(draw, annotated.size, action_candidates, current_waypoint)
             paste_subgoal(annotated, subgoal_image)
             pub.publish(pil_to_msg(annotated))
         rate.sleep()

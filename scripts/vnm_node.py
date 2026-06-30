@@ -39,7 +39,8 @@ def main():
     model = VNMModel(model_cfg, checkpoint)
     navigation_mode = robot.get("navigation_mode", "topomap")
     action_sample_strategy = model_cfg.get("action_sample_strategy", "first")
-    use_cmd_dir = action_sample_strategy == "cmd_dir"
+    select_by_cmd_dir = action_sample_strategy == "cmd_dir"
+    use_cmd_dir_input = bool(model_cfg.get("direction_conditioning", False)) or select_by_cmd_dir
     if navigation_mode == "explore" and model_cfg["model_type"] != "nomad":
         raise ValueError("navigation_mode=explore requires model_type=nomad")
 
@@ -66,7 +67,7 @@ def main():
     action_selector = CmdDirActionSelector(
         theta_threshold_deg=float(model_cfg.get("cmd_dir_theta_threshold_deg", 15.0))
     )
-    if navigation_mode == "explore" and use_cmd_dir:
+    if navigation_mode == "explore" and use_cmd_dir_input:
         rospy.Subscriber(
             topics["cmd_dir_topic"],
             cmd_dir_intersection,
@@ -98,7 +99,8 @@ def main():
     info(f"navigation_mode={navigation_mode}")
     if navigation_mode == "explore":
         info(f"action_sample_strategy={action_sample_strategy}")
-        if use_cmd_dir:
+        if use_cmd_dir_input:
+            info(f"direction_conditioning={model_cfg.get('direction_conditioning', False)}")
             info(
                 f"cmd_dir_theta_threshold_deg="
                 f"{model_cfg.get('cmd_dir_theta_threshold_deg', 15.0)}"
@@ -115,12 +117,18 @@ def main():
 
         if image_sub.ready() and not reached:
             if navigation_mode == "explore":
-                cmd_dir = action_selector.cmd_dir if use_cmd_dir else None
+                cmd_dir = action_selector.cmd_dir if use_cmd_dir_input else None
                 actions = model.predict_explore(image_sub.context(), cmd_dir=cmd_dir)
-                if use_cmd_dir:
+                if select_by_cmd_dir:
                     waypoint = action_selector.select(actions, waypoint_index)
                     selected_action = action_selector.selected_action
                     selected_sample = action_selector.selected_sample
+                elif action_sample_strategy == "mean":
+                    selected_action = actions.mean(axis=0)
+                    selected_sample = -1
+                    selected_waypoint_index = min(waypoint_index, actions.shape[1] - 1)
+                    waypoint = selected_action[selected_waypoint_index]
+                    info("mode=explore selected_sample=mean")
                 else:
                     waypoint = actions[0, min(waypoint_index, actions.shape[1] - 1)]
                     selected_action = actions[0]
@@ -145,7 +153,7 @@ def main():
                         [actions, selected_action[np.newaxis, :, :]], axis=0
                     )
                     display_selected_sample = display_actions.shape[0] - 1
-                if use_cmd_dir:
+                if select_by_cmd_dir:
                     info(
                         f"target_dir={action_selector.target_name} "
                         f"mode=explore selected_sample={selected_sample} "
