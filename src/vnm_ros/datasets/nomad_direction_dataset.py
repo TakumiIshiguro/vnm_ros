@@ -3,6 +3,7 @@ from typing import Sequence
 import numpy as np
 import torch
 
+from vnm_ros.datasets.cmd_dir_utils import hold_cmd_dir_changes
 from vnm_ros.datasets.dataset_utils import load_image, to_local_coords
 from vnm_ros.datasets.trajectory_dataset import TrajectoryDataset
 
@@ -16,6 +17,7 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         len_traj_pred: int,
         waypoint_spacing: int,
         action_stats: dict,
+        cmd_dir_hold_samples_after_change: int = 0,
     ):
         self.image_size = tuple(image_size)
         self.context_size = int(context_size)
@@ -23,8 +25,18 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         self.waypoint_spacing = int(waypoint_spacing)
         self.action_min = np.asarray(action_stats["min"], dtype=np.float32)
         self.action_max = np.asarray(action_stats["max"], dtype=np.float32)
+        self.cmd_dir_hold_samples_after_change = int(cmd_dir_hold_samples_after_change)
         super().__init__(data_dir)
         self.samples = self._build_index()
+
+    def _validate_trajectory(self, name: str, trajectory: dict, length: int):
+        cmd_dir = np.asarray(trajectory["cmd_dir"], dtype=np.float32)
+        if cmd_dir.shape != (length, 3):
+            raise ValueError(f"{name}: cmd_dir shape must be ({length}, 3), got {cmd_dir.shape}")
+        trajectory["cmd_dir"] = hold_cmd_dir_changes(
+            cmd_dir,
+            self.cmd_dir_hold_samples_after_change,
+        )
 
     def _build_index(self):
         samples = []

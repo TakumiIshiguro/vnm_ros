@@ -39,6 +39,9 @@ class TrajectoryDataset(Dataset):
                 raise ValueError(
                     f"{name}: images={len(files)}, positions={length}, yaw={len(trajectory['yaw'])}"
                 )
+            validate = getattr(self, "_validate_trajectory", None)
+            if validate is not None:
+                validate(name, trajectory, length)
             self._image_files[name] = files
 
     def trajectory(self, name: str) -> dict:
