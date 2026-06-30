@@ -49,6 +49,20 @@ Visualization Manager:
       Shaft Radius: 0.05
       Shape: Arrow
       Topic: /vnm_visualize_dataset/pose
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /vnm_visualize_dataset/direction_markers
+      Name: Direction markers
+      Namespaces:
+        dataset_cmd_dir: true
+      Queue Size: 100
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /vnm_visualize_dataset/trajectory_markers
+      Name: All trajectories
+      Namespaces:
+        dataset_trajectories: true
+      Queue Size: 100
     - Class: rviz/Image
       Enabled: true
       Max Value: 1
