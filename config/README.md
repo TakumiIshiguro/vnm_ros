@@ -66,7 +66,7 @@ NoMaD専用、またはNoMaD checkpointに合わせる設定です。
 | `num_diffusion_iters` | NoMaD推論時の逆拡散ステップ数です。 |
 | `num_action_samples` | NoMaDでゴール候補ごとにサンプルするAction数です。 |
 | `action_noise_scale` | NoMaD diffusionの初期ノイズ倍率です。`1.0` が標準で、大きくすると候補のばらつきが増えます。 |
-| `action_sample_strategy` | 複数Actionサンプルの選び方です。`first`、`mean`、または探索モード用の `cmd_dir` を指定します。探索モードで `cmd_dir` の場合、各候補軌道の円周平均角を `cmd_dir_theta_threshold_deg` でleft/straight/rightへ分け、目標方向クラスタのmedoidを選びます。`first` の場合はdirectionなしで先頭サンプルを使います。 |
+| `action_sample_strategy` | 複数Actionサンプルの選び方です。`first`、`mean`、または探索モード用の `cmd_dir` を指定します。`direction_conditioning: true` なら `first`/`mean` でも `cmd_dir` はNoMaDのモデル入力として使われます。`mean` は `cmd_dir` 条件付きで生成した候補軌道の平均を使います。探索モードで `cmd_dir` の場合、各候補軌道の円周平均角を `cmd_dir_theta_threshold_deg` でleft/straight/rightへ分け、目標方向クラスタのmedoidを選びます。 |
 | `cmd_dir_theta_threshold_deg` | `action_sample_strategy: cmd_dir` で候補軌道をleft/straight/rightに分ける代表方向角の閾値 `[deg]` です。 |
 | `action_stats` | NoMaDの正規化済みActionを実Actionへ戻すためのmin/maxです。 |
 
@@ -131,7 +131,7 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 | パラメータ | 意味 |
 | --- | --- |
 | `dataset.dataset_type` | 再生するDatasetの種類です。`train` または `test` を指定します。 |
-| `dataset.trajectory_name` | 再生する軌跡ディレクトリ名です。空文字の場合は対象Dataset内の最新ディレクトリを使用します。 |
+| `dataset.trajectory_name` | 再生する軌跡ディレクトリ名です。空文字の場合は対象Dataset内の全軌跡を順番に再生します。 |
 | `dataset.frame_id` | RVizへ出すPathとPoseの基準フレームです。 |
 | `dataset.rate` | Dataset画像とPoseの再生周期 `[Hz]` です。 |
 | `dataset.loop` | `true` の場合、最後まで再生したあと先頭へ戻ります。 |
@@ -170,6 +170,7 @@ Dataset作成、ViNT学習、評価をまとめます。
 | `max_goal_distance` | 現在フレームから目標画像までの最大間隔です。 |
 | `min_action_distance` | Action lossを計算する目標距離の下限です。 |
 | `max_action_distance` | Action lossを計算する目標距離の上限です。 |
+| `cmd_dir_hold_samples_after_change` | `cmd_dir` が切り替わったあと、このサンプル数だけ切替前のラベルを保持します。`0` なら即切替です。学習とDataset可視化に適用され、保存済みpkl自体は変更しません。 |
 | `normalize` | `true` の場合、正解WaypointのXYを `metric_waypoint_spacing * waypoint_spacing` で除算します。 |
 | `learn_angle` | `true` の場合、正解Waypointへ向きのcos/sinを追加します。 |
 | `negative_mining` | `true` の場合、学習データの約10%で無関係な目標画像を選びます。 |
@@ -183,11 +184,39 @@ Dataset作成、ViNT学習、評価をまとめます。
 | `pose_source` | Datasetの軌跡に使う姿勢情報です。`odometry` または `amcl` を指定します。 |
 | `sample_dt` | Datasetへ画像と選択した姿勢情報を保存する時間間隔 `[s]` です。 |
 | `image_format` | 保存画像の拡張子です。例: `jpg`、`png`。 |
+| `control_rate` | nav recovery収集時にcmd_velをpublishする周期 `[Hz]` です。 |
+| `nav_path_topic` | 経路からの距離判定に使うnav stackのPath topicです。 |
+| `nav_cmd_vel_topic` | 経路復帰時に使うnav stackのcmd_vel topicです。 |
+| `vint_cmd_vel_topic` | 通常走行時に使うVNM/NoMaDのdebug cmd_vel topicです。通常は `/vnm/cmd_vel_debug` です。 |
+| `publish_zero_when_idle` | 入力cmd_velが未到着のときにzero twistをpublishするかを指定します。 |
+| `recovery_start_distance` | 経路からこの距離以上離れたらnav recoveryへ切り替えます `[m]`。 |
+| `vint_resume_distance` | 経路へこの距離以内に戻ったらVNM/NoMaD走行へ戻します `[m]`。 |
+| `angular_recovery_enabled` | `true` の場合、navとVNM/NoMaDの角速度差でもnav recoveryへ切り替えます。 |
+| `angular_recovery_start_error` | `abs(nav.angular.z - vnm.angular.z)` がこの値以上ならnav recoveryへ切り替えます `[rad/s]`。 |
+| `angular_recovery_resume_error` | 角速度差がこの値以下、かつ経路距離が `vint_resume_distance` 以下ならVNM/NoMaD走行へ戻します `[rad/s]`。 |
+| `min_trajectory_samples` | trajectoryを保存・切替する最小サンプル数です。NoMaDの `context_size: 3`, `len_traj_pred: 8` では12以上が安全です。 |
 
 Dataset作成時に `cmd_dir_topic` がbagに含まれている場合、各保存サンプルへ
 最新の `cmd_dir` one-hotラベルも保存します。NoMaD方向fine-tuningではこの
 保存済みラベルを使用します。未収録データは互換性のためstraight `[1, 0, 0]`
 として扱われます。
+
+nav recovery付きのオンライン収集は以下で実行します。
+
+```bash
+roslaunch vnm_ros collect_dataset_nav_recovery.launch
+```
+
+この収集スクリプトは通常時に `/vnm/cmd_vel_debug`、復帰時に `/nav_vel` を
+選んで `/cmd_vel` へpublishします。復帰への切替は経路からの距離、または
+navとVNM/NoMaDの角速度差で判定できます。重複publishを避けるため、収集中は
+VNM本体の直接 `/cmd_vel` publishを止め、debug topicだけを使う構成にしてください。
+
+収集後の `traj_data.pkl` はCSVへ変換できます。
+
+```bash
+rosrun vnm_ros pkl_to_csv.py dataset/my_dataset/train -r
+```
 
 ### training
 
