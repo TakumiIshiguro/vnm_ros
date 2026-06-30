@@ -18,6 +18,7 @@ dataset:
   max_goal_distance: 20
   min_action_distance: 0
   max_action_distance: 10
+  cmd_dir_hold_samples_after_change: 10
   normalize: true
   learn_angle: true
   negative_mining: true
@@ -25,13 +26,24 @@ dataset:
 collection:
   dataset_type: train
   trajectory_name: ""
-  pose_source: odometry
+  pose_source: amcl
   sample_dt: 0.25
   image_format: jpg
+  control_rate: 10.0
+  nav_path_topic: /move_base/NavfnROS/plan
+  nav_cmd_vel_topic: /nav_vel
+  vint_cmd_vel_topic: /vnm/cmd_vel_debug
+  publish_zero_when_idle: true
+  recovery_start_distance: 0.15
+  vint_resume_distance: 0.1
+  angular_recovery_enabled: true
+  angular_recovery_start_error: 0.4
+  angular_recovery_resume_error: 0.05
+  min_trajectory_samples: 12
 
 training:
   pretrained_weights_path: weights/nomad.pth
-  freeze_encoder: true
+  freeze_encoder: false
   use_test: false
   tensorboard: true
   epochs: 20
@@ -39,7 +51,7 @@ training:
   num_workers: 4
   learning_rate: 0.00005
   weight_decay: 0.0001
-  alpha: 0.5
+  alpha: 0.0
   gradient_clip: 1.0
   scheduler: cosine
   resume: ""

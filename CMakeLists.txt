@@ -16,11 +16,13 @@ catkin_python_setup()
 catkin_package()
 
 catkin_install_python(PROGRAMS
+  scripts/collect_dataset_nav_recovery.py
   scripts/create_dataset.py
   scripts/create_topomap.py
   scripts/eval.py
   scripts/keyboard_cmd_dir.py
   scripts/overlay_view.py
+  scripts/pkl_to_csv.py
   scripts/train.py
   scripts/vnm_node.py
   scripts/visualize_dataset.py

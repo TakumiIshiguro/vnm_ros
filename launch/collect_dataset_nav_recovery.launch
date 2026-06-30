@@ -1,0 +1,6 @@
+<launch>
+  <node pkg="vnm_ros" type="collect_dataset_nav_recovery.py"
+        name="vnm_collect_dataset_nav_recovery" output="screen">
+    <param name="config_dir" value="$(find vnm_ros)/config"/>
+  </node>
+</launch>
