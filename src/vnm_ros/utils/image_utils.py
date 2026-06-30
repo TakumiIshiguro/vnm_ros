@@ -24,9 +24,10 @@ def pil_to_msg(pil_img: PILImage.Image, encoding: str = "rgb8") -> Image:
     return msg
 
 
-def transform_images(pil_imgs, image_size: List[int]):
+def transform_images(pil_imgs, image_size: List[int], center_crop: bool = True):
     import torch
     from torchvision import transforms
+    from torchvision.transforms import functional as TF
 
     if not isinstance(pil_imgs, list):
         pil_imgs = [pil_imgs]
@@ -44,6 +45,15 @@ def transform_images(pil_imgs, image_size: List[int]):
     tensors = []
     for pil_img in pil_imgs:
         pil_img = pil_img.convert("RGB")
+        if center_crop:
+            width, height = pil_img.size
+            target_ratio = 4.0 / 3.0
+            if width / height > target_ratio:
+                crop_width = int(height * target_ratio)
+                pil_img = TF.center_crop(pil_img, (height, crop_width))
+            else:
+                crop_height = int(width / target_ratio)
+                pil_img = TF.center_crop(pil_img, (crop_height, width))
         tensors.append(torch.unsqueeze(transform(pil_img.resize(image_size)), 0))
     return torch.cat(tensors, dim=1)
 
