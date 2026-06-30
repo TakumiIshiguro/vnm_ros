@@ -14,6 +14,7 @@ from nav_msgs.msg import Odometry, Path
 from scenario_navigation_msgs.msg import cmd_dir_intersection
 from sensor_msgs.msg import Image
 
+from vnm_ros.datasets.cmd_dir_utils import CmdDirHoldFilter
 from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
 from vnm_ros.utils.image_utils import msg_to_pil
 from vnm_ros.utils.logger import info, warn
@@ -68,6 +69,9 @@ class NavRecoveryDatasetCollector:
 
         self.sample_dt = float(self.collection_cfg["sample_dt"])
         self.extension = self.collection_cfg.get("image_format", "jpg")
+        self.cmd_dir_hold_samples_after_change = int(
+            self.dataset_cfg.get("cmd_dir_hold_samples_after_change", 0)
+        )
         self.recovery_start_distance = float(
             self.collection_cfg.get("recovery_start_distance", 0.145)
         )
@@ -126,6 +130,7 @@ class NavRecoveryDatasetCollector:
         self.trajectory_dir = None
         self.last_saved = float("-inf")
         self.trajectory_switch_pending = False
+        self.cmd_dir_filter = CmdDirHoldFilter(self.cmd_dir_hold_samples_after_change)
 
         self.positions = []
         self.yaws = []
@@ -151,6 +156,7 @@ class NavRecoveryDatasetCollector:
             f"angular_recovery_start_error={self.angular_recovery_start_error:.3f} "
             f"angular_recovery_resume_error={self.angular_recovery_resume_error:.3f} "
             f"min_trajectory_samples={self.min_trajectory_samples} "
+            f"cmd_dir_hold_samples_after_change={self.cmd_dir_hold_samples_after_change} "
             f"publish_zero_when_idle={self.publish_zero_when_idle}"
         )
 
@@ -296,7 +302,7 @@ class NavRecoveryDatasetCollector:
         image.save(os.path.join(self.trajectory_dir, f"{index}.{self.extension}"))
         self.positions.append(self.current_position.copy())
         self.yaws.append(float(self.current_yaw))
-        self.cmd_dirs.append(self.current_cmd_dir.copy())
+        self.cmd_dirs.append(self.cmd_dir_filter.update(self.current_cmd_dir))
         self.last_saved = self.latest_image_time
         path_distance = "none" if self.path_distance is None else f"{self.path_distance:.3f}"
         angular_error = self.angular_error()
@@ -407,6 +413,7 @@ class NavRecoveryDatasetCollector:
         self.cmd_dirs = []
         self.last_saved = float("-inf")
         self.trajectory_switch_pending = False
+        self.cmd_dir_filter.reset()
 
 
 if __name__ == "__main__":

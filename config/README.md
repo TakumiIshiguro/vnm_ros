@@ -170,7 +170,7 @@ Dataset作成、ViNT学習、評価をまとめます。
 | `max_goal_distance` | 現在フレームから目標画像までの最大間隔です。 |
 | `min_action_distance` | Action lossを計算する目標距離の下限です。 |
 | `max_action_distance` | Action lossを計算する目標距離の上限です。 |
-| `cmd_dir_hold_samples_after_change` | `cmd_dir` が切り替わったあと、このサンプル数だけ切替前のラベルを保持します。`0` なら即切替です。学習とDataset可視化に適用され、保存済みpkl自体は変更しません。 |
+| `cmd_dir_hold_samples_after_change` | オンライン収集で `cmd_dir` が切り替わったあと、このサンプル数だけ切替前のラベルを保持して `traj_data.pkl` へ保存します。`0` なら即切替です。 |
 | `normalize` | `true` の場合、正解WaypointのXYを `metric_waypoint_spacing * waypoint_spacing` で除算します。 |
 | `learn_angle` | `true` の場合、正解Waypointへ向きのcos/sinを追加します。 |
 | `negative_mining` | `true` の場合、学習データの約10%で無関係な目標画像を選びます。 |

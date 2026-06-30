@@ -14,7 +14,6 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Float32MultiArray
 from visualization_msgs.msg import Marker, MarkerArray
 
-from vnm_ros.datasets.cmd_dir_utils import hold_cmd_dir_changes
 from vnm_ros.datasets.trajectory_dataset import TrajectoryDataset
 from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
 from vnm_ros.utils.image_utils import pil_to_msg
@@ -192,11 +191,11 @@ def trajectory_marker_array(dataset, trajectory_names, frame_id, stamp):
     return markers
 
 
-def trajectory_cmd_dirs(trajectory, hold_samples_after_change):
+def trajectory_cmd_dirs(trajectory):
     cmd_dirs = trajectory.get("cmd_dir")
     if cmd_dirs is None:
         return None
-    return hold_cmd_dir_changes(cmd_dirs, hold_samples_after_change)
+    return cmd_dirs
 
 
 def all_direction_marker_array(dataset, trajectory_names, cmd_dir_cache, frame_id, stamp):
@@ -243,9 +242,6 @@ def main():
     requested_name = visualization_cfg["trajectory_name"]
     trajectory_names = select_trajectories(data_dir, requested_name)
     dataset = TrajectoryDataset(data_dir, trajectory_names)
-    cmd_dir_hold_samples_after_change = int(
-        dataset_cfg.get("cmd_dir_hold_samples_after_change", 0)
-    )
 
     frame_id = visualization_cfg["frame_id"]
     rate = float(visualization_cfg["rate"])
@@ -267,10 +263,7 @@ def main():
     stamp = rospy.Time.now()
     first_trajectory = dataset.trajectory(trajectory_names[0])
     cmd_dir_cache = {
-        name: trajectory_cmd_dirs(
-            dataset.trajectory(name),
-            cmd_dir_hold_samples_after_change,
-        )
+        name: trajectory_cmd_dirs(dataset.trajectory(name))
         for name in trajectory_names
     }
     path_pub.publish(trajectory_path(first_trajectory, frame_id, stamp))
@@ -304,8 +297,7 @@ def main():
         f"trajectories={len(trajectory_names)} "
         f"samples={total_samples} "
         f"required_trainable_samples={required_samples} "
-        f"has_cmd_dir={has_cmd_dir} "
-        f"cmd_dir_hold_samples_after_change={cmd_dir_hold_samples_after_change}",
+        f"has_cmd_dir={has_cmd_dir}",
         flush=True,
     )
     if too_short:

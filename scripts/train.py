@@ -57,9 +57,6 @@ def make_nomad_dataset(config, model_cfg, dataset_type):
         len_traj_pred=int(model_cfg["len_traj_pred"]),
         waypoint_spacing=int(dataset["waypoint_spacing"]),
         action_stats=model_cfg["action_stats"],
-        cmd_dir_hold_samples_after_change=int(
-            dataset.get("cmd_dir_hold_samples_after_change", 0)
-        ),
     )
 
 
