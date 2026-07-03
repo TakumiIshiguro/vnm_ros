@@ -6,9 +6,10 @@
   <arg name="map_yaml" default="$(find orne_navigation_executor)/config/maps/cit_3f_map.yaml"/>
   <arg name="image_size" default="1200"/>
   <arg name="padding_m" default="1.0"/>
+  <arg name="training_samples_per_direction" default="10"/>
 
   <node if="$(eval trajectory_name != '')" pkg="vnm_ros" type="plot_dataset_trajectories.py" name="vnm_plot_dataset_trajectories" output="screen"
-        args="--config-dir $(arg config_dir) --dataset-type $(arg dataset_type) --trajectory-name $(arg trajectory_name) --output-dir $(arg output_dir) --map-yaml $(arg map_yaml) --image-size $(arg image_size) --padding-m $(arg padding_m)"/>
+        args="--config-dir $(arg config_dir) --dataset-type $(arg dataset_type) --trajectory-name $(arg trajectory_name) --output-dir $(arg output_dir) --map-yaml $(arg map_yaml) --image-size $(arg image_size) --padding-m $(arg padding_m) --training-samples-per-direction $(arg training_samples_per_direction)"/>
   <node unless="$(eval trajectory_name != '')" pkg="vnm_ros" type="plot_dataset_trajectories.py" name="vnm_plot_dataset_trajectories" output="screen"
-        args="--config-dir $(arg config_dir) --dataset-type $(arg dataset_type) --output-dir $(arg output_dir) --map-yaml $(arg map_yaml) --image-size $(arg image_size) --padding-m $(arg padding_m)"/>
+        args="--config-dir $(arg config_dir) --dataset-type $(arg dataset_type) --output-dir $(arg output_dir) --map-yaml $(arg map_yaml) --image-size $(arg image_size) --padding-m $(arg padding_m) --training-samples-per-direction $(arg training_samples_per_direction)"/>
 </launch>

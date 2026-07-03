@@ -236,7 +236,10 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 ```
 
 出力先はデフォルトで `vnm_ros/plots/dataset/<train|test>/` です。`overview.png`
-に全軌跡、`trajectories/` に各軌跡ごとの画像を保存します。
+に全軌跡、`trajectories/` に各軌跡ごとの画像を保存します。NoMaDの場合は
+`training_samples/` に実際に学習に使うcontext画像列と教師軌跡も保存します。
+`training_samples_per_direction` でstraight/left/rightそれぞれ何枚保存するかを
+指定できます。`-1` なら各方向の学習サンプルを全件保存し、`0` なら保存しません。
 
 ### training
 
@@ -246,7 +249,6 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 | `freeze_encoder` | `true` の場合、画像Encoderを固定して学習します。 |
 | `use_test` | `true` の場合、各epochでtest Datasetを評価します。 |
 | `tensorboard` | TensorBoardログを保存するかを指定します。 |
-| `plot_training_samples_per_direction` | NoMaD方向学習開始時に、実際に学習に使うサンプルの画像と教師軌跡を `runs/<run>/training_samples/` へ保存する枚数です。straight/left/rightそれぞれから最大この枚数を保存します。 |
 | `epochs` | 学習する総epoch数です。 |
 | `batch_size` | 1回の更新で使用するサンプル数です。 |
 | `num_workers` | PyTorch DataLoaderの並列読込プロセス数です。 |

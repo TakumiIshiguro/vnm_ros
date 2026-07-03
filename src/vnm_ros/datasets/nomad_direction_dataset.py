@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 import torch
@@ -16,6 +16,7 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         len_traj_pred: int,
         waypoint_spacing: int,
         action_stats: dict,
+        trajectory_names: Optional[Sequence[str]] = None,
     ):
         self.image_size = tuple(image_size)
         self.context_size = int(context_size)
@@ -24,7 +25,7 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         self.action_min = np.asarray(action_stats["min"], dtype=np.float32)
         self.action_max = np.asarray(action_stats["max"], dtype=np.float32)
         self.skipped_mixed_cmd_dir_samples = 0
-        super().__init__(data_dir)
+        super().__init__(data_dir, trajectory_names=trajectory_names)
         self.samples = self._build_index()
 
     def _validate_trajectory(self, name: str, trajectory: dict, length: int):

@@ -12,7 +12,6 @@ import torch
 from torch.utils.data import DataLoader
 
 from vnm_ros.datasets import NoMaDDirectionDataset, ViNTDataset
-from vnm_ros.datasets.dataset_utils import to_local_coords
 from vnm_ros.models.model_loader import (
     build_model,
     freeze_image_encoders,
@@ -67,127 +66,6 @@ def dataset_name(data_dir):
     if directory_name in ("train", "test"):
         return os.path.basename(os.path.dirname(normalized))
     return directory_name
-
-
-def cmd_dir_name(cmd_dir):
-    names = ("straight", "left", "right")
-    cmd_dir = np.asarray(cmd_dir, dtype=np.float32)
-    if cmd_dir.size < 3 or float(np.sum(cmd_dir[:3])) <= 0.0:
-        return "none"
-    return names[int(np.argmax(cmd_dir[:3]))]
-
-
-def preview_indices(length, count):
-    count = min(int(count), int(length))
-    if count <= 0:
-        return []
-    return sorted(set(np.linspace(0, length - 1, count, dtype=int).tolist()))
-
-
-def preview_indices_per_direction(dataset, count_per_direction):
-    by_direction = {"straight": [], "left": [], "right": []}
-    for sample_index, (name, current) in enumerate(dataset.samples):
-        trajectory = dataset.trajectory(name)
-        direction = cmd_dir_name(trajectory["cmd_dir"][current])
-        if direction in by_direction:
-            by_direction[direction].append(sample_index)
-
-    selected = []
-    for direction in ("straight", "left", "right"):
-        indices = by_direction[direction]
-        local_indices = preview_indices(len(indices), count_per_direction)
-        selected.extend((direction, indices[index]) for index in local_indices)
-    return selected
-
-
-def draw_local_trajectory(draw, box, points, color):
-    x0, y0, x1, y1 = box
-    width = x1 - x0
-    height = y1 - y0
-    margin = 28
-    points = np.asarray(points, dtype=np.float32)
-    max_abs_y = max(float(np.max(np.abs(points[:, 1]))), 0.1)
-    max_x = max(float(np.max(points[:, 0])), 0.1)
-    scale = min((width - 2 * margin) / (2.0 * max_abs_y), (height - 2 * margin) / max_x)
-    origin = (x0 + width // 2, y1 - margin)
-
-    def project(point):
-        px = origin[0] - float(point[1]) * scale
-        py = origin[1] - float(point[0]) * scale
-        return (px, py)
-
-    draw.rectangle(box, outline=(190, 190, 190), width=1)
-    draw.line((origin[0], y0 + margin, origin[0], y1 - margin), fill=(220, 220, 220))
-    draw.line((x0 + margin, origin[1], x1 - margin, origin[1]), fill=(220, 220, 220))
-    projected = [project(point) for point in points]
-    if len(projected) >= 2:
-        draw.line(projected, fill=color, width=4, joint="curve")
-    for index, point in enumerate(projected):
-        radius = 5 if index == 0 else 4
-        fill = (30, 140, 70) if index == 0 else color
-        draw.ellipse(
-            (point[0] - radius, point[1] - radius, point[0] + radius, point[1] + radius),
-            fill=fill,
-        )
-
-
-def save_nomad_training_previews(dataset, output_dir, count_per_direction=10):
-    from PIL import Image, ImageDraw
-
-    os.makedirs(output_dir, exist_ok=True)
-    colors = {
-        "straight": (40, 150, 80),
-        "left": (60, 110, 220),
-        "right": (220, 80, 70),
-        "none": (120, 120, 120),
-    }
-    written = []
-    selected_samples = preview_indices_per_direction(dataset, count_per_direction)
-    direction_counts = {"straight": 0, "left": 0, "right": 0}
-    for preview_id, (_, sample_index) in enumerate(selected_samples):
-        name, current = dataset.samples[sample_index]
-        trajectory = dataset.trajectory(name)
-        action_indices = current + np.arange(dataset.len_traj_pred + 1) * dataset.waypoint_spacing
-        positions = trajectory["position"][action_indices]
-        yaw = float(trajectory["yaw"][current])
-        local_positions = to_local_coords(positions, positions[0], yaw)
-        cmd_name = cmd_dir_name(trajectory["cmd_dir"][current])
-
-        context_indices = current + np.arange(-dataset.context_size, 1) * dataset.waypoint_spacing
-        context_images = []
-        for context_index in context_indices:
-            with Image.open(dataset.image_path(name, int(context_index))) as source:
-                context_images.append(source.convert("RGB").resize((128, 128)))
-
-        canvas_width = 64 + len(context_images) * 144 + 328
-        canvas = Image.new("RGB", (canvas_width, 320), (250, 250, 250))
-        draw = ImageDraw.Draw(canvas)
-        draw.text((24, 18), f"{preview_id:02d} {name} idx={current} cmd={cmd_name}", fill=(20, 20, 20))
-        for image_id, image in enumerate(context_images):
-            x = 24 + image_id * 144
-            canvas.paste(image, (x, 64))
-            frame_color = (30, 140, 70) if image_id == len(context_images) - 1 else (170, 170, 170)
-            draw.rectangle((x, 64, x + 128, 192), outline=frame_color, width=3)
-            label = "current" if image_id == len(context_images) - 1 else f"t-{len(context_images) - 1 - image_id}"
-            draw.text((x, 42), f"{label} idx={int(context_indices[image_id])}", fill=(20, 20, 20))
-
-        traj_x0 = 48 + len(context_images) * 144
-        draw.text((traj_x0, 18), "teacher trajectory in robot frame", fill=(20, 20, 20))
-        draw_local_trajectory(
-            draw,
-            (traj_x0, 48, traj_x0 + 304, 304),
-            local_positions,
-            colors.get(cmd_name, colors["none"]),
-        )
-        direction_id = direction_counts.get(cmd_name, 0)
-        direction_counts[cmd_name] = direction_id + 1
-        output_path = os.path.join(
-            output_dir,
-            f"{cmd_name}_{direction_id:02d}_sample_{preview_id:02d}.png",
-        )
-        canvas.save(output_path)
-        written.append(output_path)
-    return written
 
 
 def main():
@@ -408,17 +286,6 @@ def train_nomad_direction(args, train_cfg, model_cfg):
     run_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     run_dir = resolve_path(os.path.join("runs", run_name), package_root())
     weights_dir = resolve_path("weights", package_root())
-    preview_count = int(
-        training.get(
-            "plot_training_samples_per_direction",
-            training.get("plot_training_samples", 10),
-        )
-    )
-    preview_paths = save_nomad_training_previews(
-        train_dataset,
-        os.path.join(run_dir, "training_samples"),
-        count_per_direction=preview_count,
-    )
     checkpoint_train_cfg = dict(train_cfg)
     checkpoint_train_cfg["run_name"] = run_name
     trainer = NoMaDTrainer(
@@ -449,8 +316,7 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         f"test_skipped_mixed_cmd_dir_samples="
         f"{getattr(validation_dataset, 'skipped_mixed_cmd_dir_samples', 0) if validation_dataset is not None else 0} "
         f"freeze_encoder={bool(training.get('freeze_encoder', True))} "
-        f"trainable_parameters={sum(p.numel() for p in trainable_parameters)} "
-        f"training_sample_plots={len(preview_paths)}"
+        f"trainable_parameters={sum(p.numel() for p in trainable_parameters)}"
     )
     trainer.fit(train_loader, validation_loader, start_epoch, int(training["epochs"]))
 
