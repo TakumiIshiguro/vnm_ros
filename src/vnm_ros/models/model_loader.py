@@ -40,6 +40,25 @@ def load_model_weights(model, checkpoint_path: str, device, strict: bool = True)
     state_dict = checkpoint_state_dict(checkpoint)
     if isinstance(state_dict, dict) and "ema_model" in state_dict:
         state_dict = state_dict["ema_model"]
+    if not strict:
+        model_state = model.state_dict()
+        filtered_state = {}
+        skipped = []
+        for key, value in state_dict.items():
+            if key not in model_state:
+                filtered_state[key] = value
+                continue
+            if model_state[key].shape == value.shape:
+                filtered_state[key] = value
+            else:
+                skipped.append(key)
+        if skipped:
+            print(
+                "skipped checkpoint keys with mismatched shapes: "
+                + ", ".join(skipped[:20])
+                + (" ..." if len(skipped) > 20 else "")
+            )
+        state_dict = filtered_state
     model.load_state_dict(state_dict, strict=strict)
     return checkpoint
 
@@ -74,6 +93,14 @@ def _build_vint(config: Dict):
 
 def _build_nomad(config: Dict):
     encoding_size = int(config.get("encoding_size", config.get("obs_encoding_size", 256)))
+    direction_encoder = None
+    if bool(config.get("direction_conditioning", False)):
+        direction_encoder = DirectionEncoder(
+            embedding_dim=encoding_size,
+            input_dim=int(config.get("direction_num_commands", 3)),
+            hidden_dim=int(config.get("direction_hidden_dim", 64)),
+            latent_dim=int(config.get("direction_latent_dim", 64)),
+        )
     vision_encoder = NoMaDViNT(
         context_size=int(config["context_size"]),
         obs_encoder=config.get("obs_encoder", "efficientnet-b0"),
@@ -81,6 +108,7 @@ def _build_nomad(config: Dict):
         mha_num_attention_heads=int(config["mha_num_attention_heads"]),
         mha_num_attention_layers=int(config["mha_num_attention_layers"]),
         mha_ff_dim_factor=int(config["mha_ff_dim_factor"]),
+        direction_encoder=direction_encoder,
     )
     noise_pred_net = build_conditional_unet1d(
         input_dim=2,
@@ -88,18 +116,10 @@ def _build_nomad(config: Dict):
         down_dims=config.get("down_dims", [64, 128, 256]),
         cond_predict_scale=bool(config.get("cond_predict_scale", False)),
     )
-    direction_encoder = None
-    if bool(config.get("direction_conditioning", False)):
-        direction_encoder = DirectionEncoder(
-            embedding_dim=encoding_size,
-            input_dim=int(config.get("direction_input_dim", 3)),
-            hidden_dim=int(config.get("direction_hidden_dim", 64)),
-        )
     return NoMaD(
         vision_encoder=vision_encoder,
         noise_pred_net=noise_pred_net,
         dist_pred_net=DenseNetwork(embedding_dim=encoding_size),
-        direction_encoder=direction_encoder,
     )
 
 

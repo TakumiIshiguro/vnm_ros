@@ -25,6 +25,15 @@ from vnm_ros.utils.image_utils import pil_to_msg
 from vnm_ros.utils.logger import info
 
 
+def cmd_dir_name(cmd_dir):
+    if cmd_dir is None or len(cmd_dir) < 3:
+        return "none"
+    cmd_dir = np.asarray(cmd_dir[:3])
+    if np.count_nonzero(cmd_dir > 0) != 1:
+        return "none"
+    return ["straight", "left", "right"][int(np.argmax(cmd_dir))]
+
+
 def main():
     rospy.init_node("vnm_node")
     config_dir = rospy.get_param("~config_dir", None)
@@ -118,6 +127,7 @@ def main():
         if image_sub.ready() and not reached:
             if navigation_mode == "explore":
                 cmd_dir = action_selector.cmd_dir if use_cmd_dir_input else None
+                target_name = cmd_dir_name(cmd_dir)
                 actions = model.predict_explore(image_sub.context(), cmd_dir=cmd_dir)
                 if select_by_cmd_dir:
                     waypoint = action_selector.select(actions, waypoint_index)
@@ -128,12 +138,12 @@ def main():
                     selected_sample = -1
                     selected_waypoint_index = min(waypoint_index, actions.shape[1] - 1)
                     waypoint = selected_action[selected_waypoint_index]
-                    info("mode=explore selected_sample=mean")
+                    info(f"target_dir={target_name} mode=explore selected_sample=mean")
                 else:
                     waypoint = actions[0, min(waypoint_index, actions.shape[1] - 1)]
                     selected_action = actions[0]
                     selected_sample = 0
-                    info("target_dir=none mode=explore selected_sample=0 target_angle=None")
+                    info(f"target_dir={target_name} mode=explore selected_sample=0 target_angle=None")
                 actions = model.scale_waypoint(
                     actions,
                     max_v=float(robot["max_v"]),

@@ -49,6 +49,7 @@ class NoMaDInference:
         image_size = self.config["image_size"]
         fake_goal = torch.randn((1, 3, image_size[1], image_size[0])).to(self.device)
         goal_mask = torch.ones(1, dtype=torch.long, device=self.device)
+        cmd_dir_tensor = self._cmd_dir_tensor(cmd_dir, batch_size=1, dtype=obs_images.dtype)
 
         with torch.no_grad():
             obs_cond = self.model(
@@ -56,8 +57,8 @@ class NoMaDInference:
                 obs_img=obs_images,
                 goal_img=fake_goal,
                 input_goal_mask=goal_mask,
+                cmd_dir=cmd_dir_tensor,
             )
-            obs_cond = self._condition_direction(obs_cond, cmd_dir)
             actions = self._sample_actions_for_cond(
                 obs_cond, int(self.config.get("num_action_samples", 8))
             )
@@ -103,21 +104,19 @@ class NoMaDInference:
 
         return self._action_from_delta(action)
 
-    def _condition_direction(self, obs_cond, cmd_dir):
+    def _cmd_dir_tensor(self, cmd_dir, batch_size: int, dtype):
         import torch
 
         if not self.config.get("direction_conditioning", False):
-            return obs_cond
+            return None
         if cmd_dir is None:
             cmd_dir = [1.0, 0.0, 0.0]
-        cmd_dir_tensor = torch.as_tensor(
-            cmd_dir, dtype=obs_cond.dtype, device=obs_cond.device
-        ).reshape(1, -1)
-        return self.model(
-            "condition_direction",
-            obsgoal_cond=obs_cond,
-            cmd_dir=cmd_dir_tensor,
-        )
+        cmd_dir_tensor = torch.as_tensor(cmd_dir, dtype=dtype, device=self.device)
+        if cmd_dir_tensor.ndim == 1:
+            cmd_dir_tensor = cmd_dir_tensor.reshape(1, -1)
+        if cmd_dir_tensor.shape[0] == 1 and batch_size > 1:
+            cmd_dir_tensor = cmd_dir_tensor.repeat(batch_size, 1)
+        return cmd_dir_tensor
 
     def _noise_scheduler(self):
         if self.noise_scheduler is not None:

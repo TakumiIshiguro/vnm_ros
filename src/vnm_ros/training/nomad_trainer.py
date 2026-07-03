@@ -72,12 +72,9 @@ class NoMaDTrainer:
             obs_img=data["observation"],
             goal_img=fake_goal,
             input_goal_mask=goal_mask,
-        )
-        return self.model(
-            "condition_direction",
-            obsgoal_cond=obs_cond,
             cmd_dir=data["cmd_dir"],
         )
+        return obs_cond
 
     def run_epoch(self, loader, training: bool) -> Dict[str, float]:
         self.model.train(training)

@@ -18,12 +18,11 @@ from vnm_ros.models.self_attention import PositionalEncoding
 
 
 class NoMaD(nn.Module):
-    def __init__(self, vision_encoder, noise_pred_net, dist_pred_net, direction_encoder=None):
+    def __init__(self, vision_encoder, noise_pred_net, dist_pred_net):
         super().__init__()
         self.vision_encoder = vision_encoder
         self.noise_pred_net = noise_pred_net
         self.dist_pred_net = dist_pred_net
-        self.direction_encoder = direction_encoder
 
     def forward(self, func_name, **kwargs):
         if func_name == "vision_encoder":
@@ -31,6 +30,7 @@ class NoMaD(nn.Module):
                 kwargs["obs_img"],
                 kwargs["goal_img"],
                 input_goal_mask=kwargs.get("input_goal_mask"),
+                cmd_dir=kwargs.get("cmd_dir"),
             )
         if func_name == "noise_pred_net":
             return self.noise_pred_net(
@@ -41,10 +41,7 @@ class NoMaD(nn.Module):
         if func_name == "dist_pred_net":
             return self.dist_pred_net(kwargs["obsgoal_cond"])
         if func_name == "condition_direction":
-            cond = kwargs["obsgoal_cond"]
-            if self.direction_encoder is None or kwargs.get("cmd_dir") is None:
-                return cond
-            return cond + self.direction_encoder(kwargs["cmd_dir"].to(cond.device).float())
+            return kwargs["obsgoal_cond"]
         raise NotImplementedError(f"Unsupported NoMaD function: {func_name}")
 
 
@@ -65,16 +62,30 @@ class DenseNetwork(nn.Module):
 
 
 class DirectionEncoder(nn.Module):
-    def __init__(self, embedding_dim: int, input_dim: int = 3, hidden_dim: int = 64):
+    def __init__(
+        self,
+        embedding_dim: int,
+        input_dim: int = 3,
+        hidden_dim: int = 64,
+        latent_dim: int = 64,
+    ):
         super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+        self.num_commands = input_dim
+        self.embedding = nn.Embedding(input_dim, latent_dim)
+        self.projector = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, embedding_dim),
         )
 
     def forward(self, cmd_dir):
-        return self.network(cmd_dir)
+        if cmd_dir.ndim == 2 and cmd_dir.shape[-1] > 1:
+            command_index = torch.argmax(cmd_dir, dim=-1)
+        else:
+            command_index = cmd_dir.reshape(-1).long()
+        command_index = torch.clamp(command_index, 0, self.num_commands - 1)
+        latent = self.embedding(command_index)
+        return self.projector(latent)
 
 
 class NoMaDViNT(nn.Module):
@@ -86,11 +97,13 @@ class NoMaDViNT(nn.Module):
         mha_num_attention_heads: Optional[int] = 4,
         mha_num_attention_layers: Optional[int] = 4,
         mha_ff_dim_factor: Optional[int] = 4,
+        direction_encoder: Optional[nn.Module] = None,
     ) -> None:
         super().__init__()
         self.obs_encoding_size = obs_encoding_size
         self.goal_encoding_size = obs_encoding_size
         self.context_size = context_size
+        self.direction_encoder = direction_encoder
 
         if obs_encoder.split("-")[0] != "efficientnet":
             raise NotImplementedError(
@@ -120,8 +133,9 @@ class NoMaDViNT(nn.Module):
         else:
             self.compress_goal_enc = nn.Identity()
 
+        seq_len = self.context_size + 2
         self.positional_encoding = PositionalEncoding(
-            self.obs_encoding_size, max_seq_len=self.context_size + 2
+            self.obs_encoding_size, max_seq_len=seq_len
         )
         sa_layer = nn.TransformerEncoderLayer(
             d_model=self.obs_encoding_size,
@@ -135,9 +149,9 @@ class NoMaDViNT(nn.Module):
             sa_layer, num_layers=mha_num_attention_layers
         )
 
-        goal_mask = torch.zeros((1, self.context_size + 2), dtype=torch.bool)
+        goal_mask = torch.zeros((1, seq_len), dtype=torch.bool)
         goal_mask[:, -1] = True
-        no_mask = torch.zeros((1, self.context_size + 2), dtype=torch.bool)
+        no_mask = torch.zeros((1, seq_len), dtype=torch.bool)
         self.register_buffer("goal_mask", goal_mask)
         self.register_buffer("no_mask", no_mask)
         self.register_buffer("all_masks", torch.cat([no_mask, goal_mask], dim=0))
@@ -145,7 +159,7 @@ class NoMaDViNT(nn.Module):
             [
                 1 - no_mask.float(),
                 (1 - goal_mask.float())
-                * ((self.context_size + 2) / (self.context_size + 1)),
+                * (seq_len / (seq_len - 1)),
             ],
             dim=0,
         )
@@ -156,19 +170,10 @@ class NoMaDViNT(nn.Module):
         obs_img: torch.Tensor,
         goal_img: torch.Tensor,
         input_goal_mask: torch.Tensor = None,
+        cmd_dir: torch.Tensor = None,
     ) -> torch.Tensor:
         device = obs_img.device
-        obsgoal_img = torch.cat(
-            [obs_img[:, 3 * self.context_size :, :, :], goal_img], dim=1
-        )
-        goal_encoding = self.goal_encoder.extract_features(obsgoal_img)
-        goal_encoding = self.goal_encoder._avg_pooling(goal_encoding)
-        if self.goal_encoder._global_params.include_top:
-            goal_encoding = goal_encoding.flatten(start_dim=1)
-            goal_encoding = self.goal_encoder._dropout(goal_encoding)
-        goal_encoding = self.compress_goal_enc(goal_encoding)
-        if len(goal_encoding.shape) == 2:
-            goal_encoding = goal_encoding.unsqueeze(1)
+        current_img = obs_img[:, 3 * self.context_size :, :, :]
 
         obs_img = torch.split(obs_img, 3, dim=1)
         obs_img = torch.cat(obs_img, dim=0)
@@ -183,6 +188,21 @@ class NoMaDViNT(nn.Module):
             (self.context_size + 1, -1, self.obs_encoding_size)
         )
         obs_encoding = torch.transpose(obs_encoding, 0, 1)
+
+        if self.direction_encoder is not None:
+            goal_encoding = self._direction_token(obs_encoding, cmd_dir)
+            input_goal_mask = None
+        else:
+            obsgoal_img = torch.cat([current_img, goal_img], dim=1)
+            goal_encoding = self.goal_encoder.extract_features(obsgoal_img)
+            goal_encoding = self.goal_encoder._avg_pooling(goal_encoding)
+            if self.goal_encoder._global_params.include_top:
+                goal_encoding = goal_encoding.flatten(start_dim=1)
+                goal_encoding = self.goal_encoder._dropout(goal_encoding)
+            goal_encoding = self.compress_goal_enc(goal_encoding)
+            if len(goal_encoding.shape) == 2:
+                goal_encoding = goal_encoding.unsqueeze(1)
+
         obs_encoding = torch.cat((obs_encoding, goal_encoding), dim=1)
 
         if input_goal_mask is not None:
@@ -204,6 +224,25 @@ class NoMaDViNT(nn.Module):
             ).unsqueeze(-1)
             obs_encoding_tokens = obs_encoding_tokens * avg_mask
         return torch.mean(obs_encoding_tokens, dim=1)
+
+    def _direction_token(self, obs_encoding: torch.Tensor, cmd_dir: torch.Tensor = None):
+        batch_size = obs_encoding.shape[0]
+        device = obs_encoding.device
+        dtype = obs_encoding.dtype
+        if cmd_dir is None:
+            cmd_dir = torch.zeros((batch_size, 3), dtype=dtype, device=device)
+            cmd_dir[:, 0] = 1.0
+        else:
+            cmd_dir = cmd_dir.to(device=device, dtype=dtype)
+            if cmd_dir.ndim == 1:
+                cmd_dir = cmd_dir.reshape(1, -1)
+            if cmd_dir.shape[0] == 1 and batch_size > 1:
+                cmd_dir = cmd_dir.repeat(batch_size, 1)
+            if cmd_dir.shape[0] != batch_size:
+                raise ValueError(
+                    f"cmd_dir batch size {cmd_dir.shape[0]} does not match image batch {batch_size}"
+                )
+        return self.direction_encoder(cmd_dir).unsqueeze(1)
 
 
 def build_conditional_unet1d(

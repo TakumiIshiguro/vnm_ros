@@ -31,6 +31,8 @@ nomad:
   cond_predict_scale: false
   down_dims: [64, 128, 256]
   direction_conditioning: true
+  direction_num_commands: 3
+  direction_latent_dim: 64
   direction_hidden_dim: 64
   num_diffusion_iters: 10
   num_action_samples: 8
