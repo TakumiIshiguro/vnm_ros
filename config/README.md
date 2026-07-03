@@ -61,8 +61,10 @@ NoMaD専用、またはNoMaD checkpointに合わせる設定です。
 | `learn_angle` | NoMaDでは通常 `false` です。 |
 | `down_dims` | NoMaD diffusion U-Netの各段の次元数です。 |
 | `cond_predict_scale` | NoMaD diffusion U-Netで条件付きscale予測を使うかを指定します。 |
-| `direction_conditioning` | `true` の場合、NoMaD条件ベクトルへ `cmd_dir` 方向エンコーダの出力を加算します。 |
-| `direction_hidden_dim` | `cmd_dir` 方向エンコーダMLPの隠れ層次元数です。 |
+| `direction_conditioning` | `true` の場合、`cmd_dir` のラベルindexから学習可能なlatent `z_i` を選び、MLPでTransformer入力用の方向tokenへ変換します。従来のgoal token位置に入り、token列は `obs tokens + direction token` になります。 |
+| `direction_num_commands` | 方向コマンド数です。通常はstraight/left/rightの3です。 |
+| `direction_latent_dim` | コマンドごとの学習可能latent `z_i` の次元数です。 |
+| `direction_hidden_dim` | `z_i` から方向tokenを作るMLPの隠れ層次元数です。 |
 | `num_diffusion_iters` | NoMaD推論時の逆拡散ステップ数です。 |
 | `num_action_samples` | NoMaDでゴール候補ごとにサンプルするAction数です。 |
 | `action_noise_scale` | NoMaD diffusionの初期ノイズ倍率です。`1.0` が標準で、大きくすると候補のばらつきが増えます。 |
@@ -170,7 +172,7 @@ Dataset作成、ViNT学習、評価をまとめます。
 | `max_goal_distance` | 現在フレームから目標画像までの最大間隔です。 |
 | `min_action_distance` | Action lossを計算する目標距離の下限です。 |
 | `max_action_distance` | Action lossを計算する目標距離の上限です。 |
-| `cmd_dir_hold_samples_after_change` | オンライン収集で `cmd_dir` が切り替わったあと、このサンプル数だけ切替前のラベルを保持して `traj_data.pkl` へ保存します。`0` なら即切替です。 |
+| `cmd_dir_hold_samples_after_change` | オンライン収集で `cmd_dir` が切り替わったあと、このサンプル数だけ切替前のラベルを保持して `traj_data.pkl` へ保存します。`auto` の場合、選択中モデルの `len_traj_pred * waypoint_spacing` から自動計算します。手動値が必要値より小さい場合も必要値まで引き上げます。 |
 | `normalize` | `true` の場合、正解WaypointのXYを `metric_waypoint_spacing * waypoint_spacing` で除算します。 |
 | `learn_angle` | `true` の場合、正解Waypointへ向きのcos/sinを追加します。 |
 | `negative_mining` | `true` の場合、学習データの約10%で無関係な目標画像を選びます。 |
@@ -194,7 +196,16 @@ Dataset作成、ViNT学習、評価をまとめます。
 | `angular_recovery_enabled` | `true` の場合、navとVNM/NoMaDの角速度差でもnav recoveryへ切り替えます。 |
 | `angular_recovery_start_error` | `abs(nav.angular.z - vnm.angular.z)` がこの値以上ならnav recoveryへ切り替えます `[rad/s]`。 |
 | `angular_recovery_resume_error` | 角速度差がこの値以下、かつ経路距離が `vint_resume_distance` 以下ならVNM/NoMaD走行へ戻します `[rad/s]`。 |
-| `min_trajectory_samples` | trajectoryを保存・切替する最小サンプル数です。NoMaDの `context_size: 3`, `len_traj_pred: 8` では12以上が安全です。 |
+| `split_trajectory_on_mode_switch` | `true` の場合、nav recoveryからVNM/NoMaD走行へ戻った時点でtrajectoryを切り替えます。通常は `false` にして、連続走行を長いtrajectoryとして保存し、学習サンプル数を増やします。 |
+| `split_trajectory_on_save_gap` | `true` の場合、保存できない期間が一定以上続いたあと次に保存するタイミングでtrajectoryを切り替えます。 |
+| `trajectory_save_gap_factor` | `split_trajectory_on_save_gap` の閾値です。`sample_dt * trajectory_save_gap_factor` より保存間隔が空いたらtrajectoryを切り替えます。 |
+| `min_trajectory_samples` | trajectoryを保存・切替する最小サンプル数です。`auto` の場合、選択中モデルの `(context_size + len_traj_pred) * waypoint_spacing + 1` から自動計算します。手動値が必要値より小さい場合も必要値まで引き上げます。 |
+
+保存画像は生画像ではなく、現在選択中モデルの `image_size` に合わせて
+4:3 center crop と resize を適用したRGB画像です。NoMaDなら通常
+`nomad.image_size`、ViNTなら `vint.image_size` が使われます。正規化
+（ImageNet mean/std）は画像ファイルには保存せず、学習・推論時にTensorへ
+変換したあと適用します。
 
 Dataset作成時に `cmd_dir_topic` がbagに含まれている場合、各保存サンプルへ
 最新の `cmd_dir` one-hotラベルも保存します。NoMaD方向fine-tuningではこの
@@ -218,6 +229,15 @@ VNM本体の直接 `/cmd_vel` publishを止め、debug topicだけを使う構�
 rosrun vnm_ros pkl_to_csv.py dataset/my_dataset/train -r
 ```
 
+Dataset軌跡をRVizなしで確認する場合は、地図画像上へtrajectoryをPNG出力できます。
+
+```bash
+roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
+```
+
+出力先はデフォルトで `vnm_ros/plots/dataset/<train|test>/` です。`overview.png`
+に全軌跡、`trajectories/` に各軌跡ごとの画像を保存します。
+
 ### training
 
 | パラメータ | 意味 |
@@ -226,6 +246,7 @@ rosrun vnm_ros pkl_to_csv.py dataset/my_dataset/train -r
 | `freeze_encoder` | `true` の場合、画像Encoderを固定して学習します。 |
 | `use_test` | `true` の場合、各epochでtest Datasetを評価します。 |
 | `tensorboard` | TensorBoardログを保存するかを指定します。 |
+| `plot_training_samples_per_direction` | NoMaD方向学習開始時に、実際に学習に使うサンプルの画像と教師軌跡を `runs/<run>/training_samples/` へ保存する枚数です。straight/left/rightそれぞれから最大この枚数を保存します。 |
 | `epochs` | 学習する総epoch数です。 |
 | `batch_size` | 1回の更新で使用するサンプル数です。 |
 | `num_workers` | PyTorch DataLoaderの並列読込プロセス数です。 |

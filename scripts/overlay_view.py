@@ -6,6 +6,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 import rospy
 from PIL import ImageDraw
+from geometry_msgs.msg import Twist
+from scenario_navigation_msgs.msg import cmd_dir_intersection
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32MultiArray
 
@@ -16,6 +18,10 @@ camera_image = None
 subgoal_image = None
 action_candidates = None
 current_waypoint = None
+current_target_dir = "none"
+current_cmd_vel = None
+vnm_cmd_vel = None
+nav_cmd_vel = None
 camera_image_size = None
 
 
@@ -43,6 +49,57 @@ def waypoint_callback(msg: Float32MultiArray):
         current_waypoint = [float(msg.data[0]), float(msg.data[1])]
     else:
         current_waypoint = None
+
+
+def cmd_dir_name(cmd_dir):
+    if len(cmd_dir) < 3:
+        return "none"
+    active = [index for index, value in enumerate(cmd_dir[:3]) if value > 0]
+    if len(active) != 1:
+        return "none"
+    return ["straight", "left", "right"][active[0]]
+
+
+def cmd_dir_callback(msg: cmd_dir_intersection):
+    global current_target_dir
+    current_target_dir = cmd_dir_name(msg.cmd_dir)
+
+
+def twist_pair(msg: Twist):
+    return float(msg.linear.x), float(msg.angular.z)
+
+
+def cmd_vel_callback(msg: Twist):
+    global current_cmd_vel
+    current_cmd_vel = twist_pair(msg)
+
+
+def vnm_cmd_vel_callback(msg: Twist):
+    global vnm_cmd_vel
+    vnm_cmd_vel = twist_pair(msg)
+
+
+def nav_cmd_vel_callback(msg: Twist):
+    global nav_cmd_vel
+    nav_cmd_vel = twist_pair(msg)
+
+
+def command_distance(first, second):
+    if first is None or second is None:
+        return None
+    return abs(first[0] - second[0]) + abs(first[1] - second[1])
+
+
+def command_source():
+    vnm_distance = command_distance(current_cmd_vel, vnm_cmd_vel)
+    nav_distance = command_distance(current_cmd_vel, nav_cmd_vel)
+    if vnm_distance is None and nav_distance is None:
+        return "unknown"
+    if nav_distance is None or (
+        vnm_distance is not None and vnm_distance <= nav_distance
+    ):
+        return "vnm"
+    return "nav"
 
 
 def decode_action_candidates(data):
@@ -164,6 +221,30 @@ def draw_action_candidates(draw: ImageDraw.ImageDraw, image_size, candidates, wa
     )
 
 
+def draw_status(draw: ImageDraw.ImageDraw, target_dir: str):
+    lines = [f"target_dir: {target_dir}", f"cmd_source: {command_source()}"]
+    if current_cmd_vel is not None:
+        lines.append(f"cmd_vel: v={current_cmd_vel[0]:+.2f} w={current_cmd_vel[1]:+.2f}")
+    if vnm_cmd_vel is not None:
+        lines.append(f"vnm: v={vnm_cmd_vel[0]:+.2f} w={vnm_cmd_vel[1]:+.2f}")
+    if nav_cmd_vel is not None:
+        lines.append(f"nav: v={nav_cmd_vel[0]:+.2f} w={nav_cmd_vel[1]:+.2f}")
+
+    x = 12
+    y = 34
+    line_boxes = [draw.textbbox((x, y), line) for line in lines]
+    width = max(box[2] - box[0] for box in line_boxes)
+    line_height = max(box[3] - box[1] for box in line_boxes)
+    height = len(lines) * line_height + (len(lines) - 1) * 2
+    draw.rectangle(
+        (x - 4, y - 3, x + width + 4, y + height + 3),
+        fill=(255, 255, 255),
+        outline=(0, 0, 0),
+    )
+    for index, line in enumerate(lines):
+        draw.text((x, y + index * (line_height + 2)), line, fill=(0, 0, 0))
+
+
 def paste_subgoal(base, subgoal):
     if subgoal is None:
         return
@@ -200,6 +281,15 @@ def main():
         queue_size=1,
     )
     rospy.Subscriber(topics["waypoint_topic"], Float32MultiArray, waypoint_callback, queue_size=1)
+    rospy.Subscriber(topics["cmd_dir_topic"], cmd_dir_intersection, cmd_dir_callback, queue_size=1)
+    rospy.Subscriber(topics["cmd_vel_topic"], Twist, cmd_vel_callback, queue_size=1)
+    rospy.Subscriber(topics["cmd_vel_debug_topic"], Twist, vnm_cmd_vel_callback, queue_size=1)
+    rospy.Subscriber(
+        cfg["train"]["collection"].get("nav_cmd_vel_topic", "/nav_vel"),
+        Twist,
+        nav_cmd_vel_callback,
+        queue_size=1,
+    )
     pub = rospy.Publisher(topics["annotated_image_topic"], Image, queue_size=1)
 
     rate = rospy.Rate(float(overlay_cfg["rate"]))
@@ -208,6 +298,7 @@ def main():
             annotated = camera_image.copy()
             draw = ImageDraw.Draw(annotated)
             draw_action_candidates(draw, annotated.size, action_candidates, current_waypoint)
+            draw_status(draw, current_target_dir)
             paste_subgoal(annotated, subgoal_image)
             pub.publish(pil_to_msg(annotated))
         rate.sleep()
