@@ -52,12 +52,15 @@ training:
   use_test: false
   tensorboard: true
   plot_training_samples_per_direction: 10
-  epochs: 20
+  epochs: 4
   batch_size: 64
   num_workers: 4
-  learning_rate: 0.00005
+  learning_rate: 0.0001
   weight_decay: 0.0001
   alpha: 0.0
   gradient_clip: 1.0
-  scheduler: cosine
+  scheduler: warmup_cosine
+  warmup_epochs: 2
+  warmup_start_factor: 0.1
+  min_lr_factor: 0.0
   resume: ""

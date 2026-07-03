@@ -120,6 +120,7 @@ class NoMaDTrainer:
     def fit(self, train_loader, validation_loader, start_epoch: int, epochs: int):
         history_path = os.path.join(self.run_dir, "metrics.jsonl")
         for epoch in range(start_epoch, epochs):
+            learning_rate = self.optimizer.param_groups[0]["lr"]
             train_metrics = self.run_epoch(train_loader, training=True)
             validation_metrics = (
                 self.run_epoch(validation_loader, training=False)
@@ -129,7 +130,6 @@ class NoMaDTrainer:
             if self.scheduler is not None:
                 self.scheduler.step()
 
-            learning_rate = self.optimizer.param_groups[0]["lr"]
             record = {
                 "epoch": epoch,
                 "train": train_metrics,

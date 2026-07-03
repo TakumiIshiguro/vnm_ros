@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import math
 import os
 import random
 import sys
@@ -68,6 +69,45 @@ def dataset_name(data_dir):
     return directory_name
 
 
+def build_scheduler(optimizer, training):
+    scheduler_name = str(training.get("scheduler", "")).lower()
+    if scheduler_name in ("", "none", "null"):
+        return None
+
+    epochs = int(training["epochs"])
+    if scheduler_name == "cosine":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
+    if scheduler_name not in ("warmup_cosine", "cosine_warmup"):
+        raise ValueError(f"Unsupported scheduler: {training.get('scheduler')}")
+
+    warmup_epochs = int(training.get("warmup_epochs", 1))
+    warmup_start_factor = float(training.get("warmup_start_factor", 0.1))
+    min_lr_factor = float(training.get("min_lr_factor", 0.0))
+    if warmup_epochs < 0:
+        raise ValueError("warmup_epochs must be >= 0")
+    if not 0.0 < warmup_start_factor <= 1.0:
+        raise ValueError("warmup_start_factor must be in (0, 1]")
+    if not 0.0 <= min_lr_factor <= 1.0:
+        raise ValueError("min_lr_factor must be in [0, 1]")
+
+    def lr_lambda(epoch):
+        if epochs <= 0:
+            return 1.0
+        if warmup_epochs > 0 and epoch < warmup_epochs:
+            if warmup_epochs == 1:
+                return warmup_start_factor
+            progress = epoch / float(warmup_epochs - 1)
+            return warmup_start_factor + (1.0 - warmup_start_factor) * progress
+
+        cosine_epochs = max(1, epochs - warmup_epochs)
+        progress = min(max((epoch - warmup_epochs) / float(cosine_epochs), 0.0), 1.0)
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return min_lr_factor + (1.0 - min_lr_factor) * cosine
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-dir", default=None)
@@ -128,11 +168,7 @@ def main():
         lr=float(training["learning_rate"]),
         weight_decay=float(training["weight_decay"]),
     )
-    scheduler = None
-    if training.get("scheduler") == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=int(training["epochs"])
-        )
+    scheduler = build_scheduler(optimizer, training)
 
     start_epoch = 0
     if resume:
@@ -241,11 +277,7 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         lr=float(training["learning_rate"]),
         weight_decay=float(training["weight_decay"]),
     )
-    scheduler = None
-    if training.get("scheduler") == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=int(training["epochs"])
-        )
+    scheduler = build_scheduler(optimizer, training)
 
     try:
         from diffusers.schedulers.scheduling_ddpm import DDPMScheduler

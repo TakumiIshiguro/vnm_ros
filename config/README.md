@@ -256,7 +256,10 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 | `weight_decay` | AdamWのweight decay係数です。 |
 | `alpha` | 距離lossとAction lossの重みです。 |
 | `gradient_clip` | 勾配ノルムの最大値です。0以下にするとクリッピングしません。 |
-| `scheduler` | 学習率Schedulerです。`cosine` の場合にCosine Annealingを使用します。 |
+| `scheduler` | 学習率Schedulerです。`cosine` はCosine Annealing、`warmup_cosine` はwarmup後にcosine減衰します。`none` または空文字で無効化します。 |
+| `warmup_epochs` | `scheduler: warmup_cosine` の場合に、何epochかけて学習率を立ち上げるかを指定します。内部epochは0始まりなので、`1` ならepoch 0だけwarmupです。 |
+| `warmup_start_factor` | warmup開始時の学習率倍率です。`0.1` なら `learning_rate * 0.1` から始めます。 |
+| `min_lr_factor` | cosine減衰後の最小学習率倍率です。`0.0` なら最終的に0まで下げます。 |
 | `resume` | 学習を再開するチェックポイントのパスです。空文字なら新規学習です。 |
 
 新規学習時の初期重みは `pretrained_weights_path` を使用します。
