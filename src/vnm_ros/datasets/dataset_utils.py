@@ -7,6 +7,8 @@ import torch
 from PIL import Image
 from torchvision.transforms import functional as TF
 
+from vnm_ros.utils.image_utils import center_crop_resize
+
 
 def numeric_image_files(directory: str) -> List[str]:
     files = [
@@ -19,15 +21,9 @@ def numeric_image_files(directory: str) -> List[str]:
 
 def load_image(path: str, image_size: Sequence[int]) -> torch.Tensor:
     image = Image.open(path).convert("RGB")
-    width, height = image.size
-    target_ratio = 4.0 / 3.0
-    if width / height > target_ratio:
-        crop_width = int(height * target_ratio)
-        image = TF.center_crop(image, (height, crop_width))
-    else:
-        crop_height = int(width / target_ratio)
-        image = TF.center_crop(image, (crop_height, width))
-    return TF.to_tensor(image.resize(tuple(image_size)))
+    if image.size != tuple(image_size):
+        image = center_crop_resize(image, image_size)
+    return TF.to_tensor(image)
 
 
 def yaw_to_rotation(yaw: float) -> np.ndarray:

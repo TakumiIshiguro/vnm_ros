@@ -4,7 +4,7 @@ paths:
 
 robot:
   navigation_mode: explore
-  model_rate: 4.0
+  model_rate: 2.0
   max_v: 0.2
   max_w: 0.4
   publish_cmd_vel: true
@@ -14,7 +14,7 @@ topomap:
   goal_node: -1
   search_radius: 4
   close_threshold: 3
-  sample_dt: 1.0
+  sample_dt: 0.5
   overwrite: true
 
 visualization:

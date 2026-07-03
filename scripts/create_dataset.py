@@ -11,7 +11,7 @@ import numpy as np
 import rospy
 
 from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
-from vnm_ros.utils.image_utils import msg_to_pil
+from vnm_ros.utils.image_utils import center_crop_resize, msg_to_pil
 from vnm_ros.utils.logger import info, warn
 
 
@@ -58,6 +58,7 @@ def main():
     config_dir = rospy.get_param("~config_dir", None)
     cfg = load_runtime_config(config_dir)
     train_cfg = cfg["train"]
+    model_cfg = cfg["model"]
     dataset_cfg = train_cfg["dataset"]
     collection_cfg = train_cfg["collection"]
     topics = cfg["topics"]
@@ -108,10 +109,11 @@ def main():
     current_yaw = None
     current_cmd_dir = np.array([1.0, 0.0, 0.0], dtype=np.float32)
     extension = collection_cfg.get("image_format", "jpg")
+    image_size = tuple(model_cfg["image_size"])
     info(
         f"creating {dataset_type} trajectory {name} every "
         f"{sample_dt:.3f}s from bag {bag_path} using "
-        f"{pose_source} pose {pose_topic}"
+        f"{pose_source} pose {pose_topic} saved_image_size={image_size}"
     )
     with rosbag.Bag(bag_path, "r") as bag:
         bag_topics = [image_topic, pose_topic]
@@ -130,7 +132,7 @@ def main():
             if msg_time - last_saved < sample_dt:
                 continue
             index = len(positions)
-            image = msg_to_pil(msg).convert("RGB")
+            image = center_crop_resize(msg_to_pil(msg), image_size)
             image.save(os.path.join(trajectory_dir, f"{index}.{extension}"))
             positions.append(current_position.copy())
             yaws.append(float(current_yaw))

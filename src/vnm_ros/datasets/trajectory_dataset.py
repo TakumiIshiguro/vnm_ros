@@ -15,7 +15,7 @@ class TrajectoryDataset(Dataset):
             trajectory_names = sorted(
                 name
                 for name in os.listdir(data_dir)
-                if os.path.isdir(os.path.join(data_dir, name))
+                if os.path.isfile(os.path.join(data_dir, name, "traj_data.pkl"))
             )
         self.trajectory_names = list(trajectory_names)
         if not self.trajectory_names:

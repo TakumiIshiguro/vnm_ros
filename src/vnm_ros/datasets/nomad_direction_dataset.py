@@ -23,6 +23,7 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         self.waypoint_spacing = int(waypoint_spacing)
         self.action_min = np.asarray(action_stats["min"], dtype=np.float32)
         self.action_max = np.asarray(action_stats["max"], dtype=np.float32)
+        self.skipped_mixed_cmd_dir_samples = 0
         super().__init__(data_dir)
         self.samples = self._build_index()
 
@@ -37,12 +38,24 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         context_offset = self.context_size * self.waypoint_spacing
         action_offset = self.len_traj_pred * self.waypoint_spacing
         for name in self.trajectory_names:
-            length = len(self.trajectory(name)["position"])
+            trajectory = self.trajectory(name)
+            length = len(trajectory["position"])
             for current in range(context_offset, length - action_offset):
+                if not self._cmd_dir_consistent(trajectory, current):
+                    self.skipped_mixed_cmd_dir_samples += 1
+                    continue
                 samples.append((name, current))
         if not samples:
             raise ValueError("No trainable NoMaD samples; trajectories may be too short")
         return samples
+
+    def _cmd_dir_consistent(self, trajectory: dict, current: int) -> bool:
+        indices = current + np.arange(self.len_traj_pred + 1) * self.waypoint_spacing
+        cmd_dirs = trajectory["cmd_dir"][indices, :3]
+        labels = np.argmax(cmd_dirs, axis=1)
+        valid = np.sum(cmd_dirs, axis=1) > 0.0
+        labels = np.where(valid, labels, 0)
+        return bool(np.all(labels == labels[0]))
 
     def __len__(self):
         return len(self.samples)

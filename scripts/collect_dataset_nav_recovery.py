@@ -16,7 +16,7 @@ from sensor_msgs.msg import Image
 
 from vnm_ros.datasets.cmd_dir_utils import CmdDirHoldFilter
 from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
-from vnm_ros.utils.image_utils import msg_to_pil
+from vnm_ros.utils.image_utils import center_crop_resize, msg_to_pil
 from vnm_ros.utils.logger import info, warn
 
 
@@ -49,6 +49,56 @@ def pose_topic_and_type(collection_cfg, topics):
     raise ValueError(f"pose_source must be amcl or odometry: {pose_source}")
 
 
+def required_trajectory_samples(model_cfg, dataset_cfg):
+    context_size = int(model_cfg["context_size"])
+    len_traj_pred = int(model_cfg["len_traj_pred"])
+    waypoint_spacing = int(dataset_cfg.get("waypoint_spacing", 1))
+    return (context_size + len_traj_pred) * waypoint_spacing + 1
+
+
+def required_cmd_dir_hold_samples(model_cfg, dataset_cfg):
+    len_traj_pred = int(model_cfg["len_traj_pred"])
+    waypoint_spacing = int(dataset_cfg.get("waypoint_spacing", 1))
+    return len_traj_pred * waypoint_spacing
+
+
+def resolve_cmd_dir_hold_samples(model_cfg, dataset_cfg):
+    required = required_cmd_dir_hold_samples(model_cfg, dataset_cfg)
+    configured = dataset_cfg.get("cmd_dir_hold_samples_after_change", "auto")
+    if configured is None or configured == "" or str(configured).lower() == "auto":
+        return required, required, "auto"
+
+    configured = int(configured)
+    if configured < required:
+        warn(
+            f"cmd_dir_hold_samples_after_change={configured} is too small for "
+            f"len_traj_pred={model_cfg['len_traj_pred']} "
+            f"waypoint_spacing={dataset_cfg.get('waypoint_spacing', 1)}; "
+            f"using {required}"
+        )
+        return required, configured, "raised"
+    return configured, required, "manual"
+
+
+def resolve_min_trajectory_samples(collection_cfg, model_cfg, dataset_cfg):
+    required = required_trajectory_samples(model_cfg, dataset_cfg)
+    configured = collection_cfg.get("min_trajectory_samples", "auto")
+    if configured is None or configured == "" or str(configured).lower() == "auto":
+        return required, required, "auto"
+
+    configured = int(configured)
+    if configured < required:
+        warn(
+            f"min_trajectory_samples={configured} is too small for "
+            f"context_size={model_cfg['context_size']} "
+            f"len_traj_pred={model_cfg['len_traj_pred']} "
+            f"waypoint_spacing={dataset_cfg.get('waypoint_spacing', 1)}; "
+            f"using {required}"
+        )
+        return required, configured, "raised"
+    return configured, required, "manual"
+
+
 class NavRecoveryDatasetCollector:
     def __init__(self):
         rospy.init_node("vnm_collect_dataset_nav_recovery")
@@ -56,6 +106,7 @@ class NavRecoveryDatasetCollector:
         cfg = load_runtime_config(config_dir)
         self.topics = cfg["topics"]
         self.train_cfg = cfg["train"]
+        self.model_cfg = cfg["model"]
         self.dataset_cfg = self.train_cfg["dataset"]
         self.collection_cfg = self.train_cfg["collection"]
 
@@ -69,9 +120,12 @@ class NavRecoveryDatasetCollector:
 
         self.sample_dt = float(self.collection_cfg["sample_dt"])
         self.extension = self.collection_cfg.get("image_format", "jpg")
-        self.cmd_dir_hold_samples_after_change = int(
-            self.dataset_cfg.get("cmd_dir_hold_samples_after_change", 0)
-        )
+        self.image_size = tuple(self.model_cfg["image_size"])
+        (
+            self.cmd_dir_hold_samples_after_change,
+            self.required_cmd_dir_hold_samples,
+            self.cmd_dir_hold_samples_source,
+        ) = resolve_cmd_dir_hold_samples(self.model_cfg, self.dataset_cfg)
         self.recovery_start_distance = float(
             self.collection_cfg.get("recovery_start_distance", 0.145)
         )
@@ -104,8 +158,23 @@ class NavRecoveryDatasetCollector:
         self.publish_zero_when_idle = bool(
             self.collection_cfg.get("publish_zero_when_idle", True)
         )
-        self.min_trajectory_samples = int(
-            self.collection_cfg.get("min_trajectory_samples", 11)
+        self.split_trajectory_on_mode_switch = bool(
+            self.collection_cfg.get("split_trajectory_on_mode_switch", False)
+        )
+        self.split_trajectory_on_save_gap = bool(
+            self.collection_cfg.get("split_trajectory_on_save_gap", True)
+        )
+        self.trajectory_save_gap_factor = float(
+            self.collection_cfg.get("trajectory_save_gap_factor", 2.5)
+        )
+        if self.trajectory_save_gap_factor <= 1.0:
+            raise ValueError("trajectory_save_gap_factor must be > 1.0")
+        (
+            self.min_trajectory_samples,
+            self.required_trajectory_samples,
+            self.min_trajectory_samples_source,
+        ) = resolve_min_trajectory_samples(
+            self.collection_cfg, self.model_cfg, self.dataset_cfg
         )
         self.output_cmd_vel_topic = self.topics.get("cmd_vel_topic", "/cmd_vel")
         self.image_topic = self.topics["image_topic"]
@@ -156,8 +225,16 @@ class NavRecoveryDatasetCollector:
             f"angular_recovery_start_error={self.angular_recovery_start_error:.3f} "
             f"angular_recovery_resume_error={self.angular_recovery_resume_error:.3f} "
             f"min_trajectory_samples={self.min_trajectory_samples} "
+            f"required_trajectory_samples={self.required_trajectory_samples} "
+            f"min_trajectory_samples_source={self.min_trajectory_samples_source} "
             f"cmd_dir_hold_samples_after_change={self.cmd_dir_hold_samples_after_change} "
+            f"required_cmd_dir_hold_samples={self.required_cmd_dir_hold_samples} "
+            f"cmd_dir_hold_samples_source={self.cmd_dir_hold_samples_source} "
+            f"split_trajectory_on_mode_switch={self.split_trajectory_on_mode_switch} "
+            f"split_trajectory_on_save_gap={self.split_trajectory_on_save_gap} "
+            f"trajectory_save_gap_factor={self.trajectory_save_gap_factor:.3f} "
             f"publish_zero_when_idle={self.publish_zero_when_idle}"
+            f" saved_image_size={self.image_size}"
         )
 
     def image_callback(self, msg):
@@ -239,7 +316,8 @@ class NavRecoveryDatasetCollector:
             info(f"mode=nav {' '.join(reasons)}")
         elif self.mode == "nav" and distance_allows_vint and angular_allows_vint:
             self.mode = "vint"
-            self.request_trajectory_switch()
+            if self.split_trajectory_on_mode_switch:
+                self.handle_mode_switch_to_vint()
             angular_text = (
                 "none" if angular_error is None else f"{angular_error:.3f}"
             )
@@ -295,10 +373,22 @@ class NavRecoveryDatasetCollector:
             return
         if self.trajectory_dir is None:
             self.start_trajectory()
+        elif self.should_split_on_save_gap():
+            gap = self.latest_image_time - self.last_saved
+            info(
+                f"trajectory save gap detected {self.name}: "
+                f"gap={gap:.3f}s threshold="
+                f"{self.sample_dt * self.trajectory_save_gap_factor:.3f}s"
+            )
+            self.finalize()
+            self.start_trajectory()
         if self.latest_image_time - self.last_saved < self.sample_dt:
             return
         index = len(self.positions)
-        image = msg_to_pil(self.latest_image).convert("RGB")
+        image = center_crop_resize(
+            msg_to_pil(self.latest_image),
+            self.image_size,
+        )
         image.save(os.path.join(self.trajectory_dir, f"{index}.{self.extension}"))
         self.positions.append(self.current_position.copy())
         self.yaws.append(float(self.current_yaw))
@@ -312,6 +402,18 @@ class NavRecoveryDatasetCollector:
             f"path_distance={path_distance} angular_error={angular_error}"
         )
         self.finalize_if_switch_ready()
+
+    def should_split_on_save_gap(self):
+        if not self.split_trajectory_on_save_gap:
+            return False
+        if not self.positions:
+            return False
+        if self.latest_image_time is None or self.last_saved == float("-inf"):
+            return False
+        return (
+            self.latest_image_time - self.last_saved
+            > self.sample_dt * self.trajectory_save_gap_factor
+        )
 
     def publish_cmd_vel(self, msg):
         if msg is not None:
@@ -377,6 +479,18 @@ class NavRecoveryDatasetCollector:
             f"trajectory switch pending {self.name}: "
             f"{len(self.positions)}/{self.min_trajectory_samples} samples"
         )
+
+    def handle_mode_switch_to_vint(self):
+        if self.trajectory_dir is None:
+            return
+        if len(self.positions) >= self.min_trajectory_samples:
+            info(
+                f"trajectory switch ready {self.name}: "
+                f"{len(self.positions)}/{self.min_trajectory_samples} samples"
+            )
+            self.finalize()
+            return
+        self.request_trajectory_switch()
 
     def finalize_if_switch_ready(self):
         if not self.trajectory_switch_pending:
