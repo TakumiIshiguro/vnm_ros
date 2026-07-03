@@ -133,15 +133,14 @@ For rosbag input, configure `runtime.yaml` and `training.yaml` before launching.
 Collection interval, dataset paths, and training parameters are configured in
 `config/training.yaml`. Topomap paths are configured in `config/runtime.yaml`.
 
-Visualize the latest training trajectory in RViz:
+Plot dataset trajectories and training samples to PNG files:
 
 ```bash
-roslaunch vnm_ros visualize_dataset.launch
+roslaunch vnm_ros plot_dataset_trajectories.launch
 ```
 
-The launch displays the recorded images, full XY trajectory, and current pose.
-Select a test trajectory, a specific trajectory name, or playback rate in
-`config/runtime.yaml`.
+The launch writes `overview.png`, per-trajectory plots, and NoMaD training
+sample previews under `plots/dataset/<train|test>/`.
 
 ## Training
 

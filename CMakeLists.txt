@@ -25,14 +25,12 @@ catkin_install_python(PROGRAMS
   scripts/pkl_to_csv.py
   scripts/train.py
   scripts/vnm_node.py
-  scripts/visualize_dataset.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 install(DIRECTORY
   launch
   config
-  rviz
   weights
   topomaps
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
