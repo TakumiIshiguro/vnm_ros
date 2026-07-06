@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from vnm_ros.datasets import NoMaDDirectionDataset, ViNTDataset
 from vnm_ros.models.model_loader import (
@@ -59,6 +59,36 @@ def make_nomad_dataset(config, model_cfg, dataset_type):
         waypoint_spacing=int(dataset["waypoint_spacing"]),
         action_stats=model_cfg["action_stats"],
     )
+
+
+def make_cmd_dir_sampler(dataset, training):
+    if not bool(training.get("balance_cmd_dir_sampling", False)):
+        return None, None
+    labels = dataset.sample_cmd_dir_labels()
+    class_counts = np.bincount(labels, minlength=3).astype(np.float64)
+    present = class_counts > 0.0
+    if np.count_nonzero(present) <= 1:
+        raise ValueError(
+            "balance_cmd_dir_sampling requires at least two cmd_dir classes "
+            f"in the training dataset, got counts={class_counts.astype(int).tolist()}"
+        )
+    power = float(training.get("cmd_dir_sampling_power", 0.5))
+    if power < 0.0:
+        raise ValueError("cmd_dir_sampling_power must be >= 0")
+    class_weights = np.zeros_like(class_counts, dtype=np.float64)
+    class_weights[present] = np.power(1.0 / class_counts[present], power)
+    sample_weights = class_weights[labels]
+    sampler = WeightedRandomSampler(
+        weights=torch.as_tensor(sample_weights, dtype=torch.double),
+        num_samples=len(sample_weights),
+        replacement=True,
+    )
+    info = {
+        "counts": class_counts.astype(int).tolist(),
+        "weights": class_weights.tolist(),
+        "power": power,
+    }
+    return sampler, info
 
 
 def dataset_name(data_dir):
@@ -309,7 +339,15 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         "num_workers": int(training["num_workers"]),
         "pin_memory": device.type == "cuda",
     }
-    train_loader = DataLoader(train_dataset, shuffle=True, **loader_args)
+    cmd_dir_sampler, cmd_dir_sampler_info = make_cmd_dir_sampler(
+        train_dataset, training
+    )
+    train_loader = DataLoader(
+        train_dataset,
+        shuffle=cmd_dir_sampler is None,
+        sampler=cmd_dir_sampler,
+        **loader_args,
+    )
     validation_loader = (
         DataLoader(validation_dataset, shuffle=False, **loader_args)
         if validation_dataset is not None
@@ -347,6 +385,8 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         f"use_test={use_test} test_samples={test_samples} "
         f"test_skipped_mixed_cmd_dir_samples="
         f"{getattr(validation_dataset, 'skipped_mixed_cmd_dir_samples', 0) if validation_dataset is not None else 0} "
+        f"balance_cmd_dir_sampling={cmd_dir_sampler is not None} "
+        f"cmd_dir_sampler_info={cmd_dir_sampler_info} "
         f"freeze_encoder={bool(training.get('freeze_encoder', True))} "
         f"trainable_parameters={sum(p.numel() for p in trainable_parameters)}"
     )

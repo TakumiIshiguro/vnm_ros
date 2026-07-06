@@ -50,6 +50,16 @@ class NoMaDDirectionDataset(TrajectoryDataset):
             raise ValueError("No trainable NoMaD samples; trajectories may be too short")
         return samples
 
+    def sample_cmd_dir_labels(self) -> np.ndarray:
+        labels = []
+        for name, current in self.samples:
+            cmd_dir = self.trajectory(name)["cmd_dir"][current][:3]
+            if np.sum(cmd_dir) <= 0.0:
+                labels.append(0)
+            else:
+                labels.append(int(np.argmax(cmd_dir)))
+        return np.asarray(labels, dtype=np.int64)
+
     def _cmd_dir_consistent(self, trajectory: dict, current: int) -> bool:
         indices = current + np.arange(self.len_traj_pred + 1) * self.waypoint_spacing
         cmd_dirs = trajectory["cmd_dir"][indices, :3]
