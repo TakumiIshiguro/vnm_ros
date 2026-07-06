@@ -1,0 +1,79 @@
+seed: 0
+device: auto
+
+paths:
+  rosbag:
+    path: "/home/takumi/bags/sim.bag"
+  dataset:
+    # train_data_dir: dataset/my_dataset/train
+    train_data_dir: dataset/nav/
+
+    # test_data_dir: dataset/nav/
+
+model:
+  device: auto
+  model_type: vint
+  obs_encoder: efficientnet-b0
+  mha_num_attention_heads: 4
+  mha_num_attention_layers: 4
+  mha_ff_dim_factor: 4
+  context_type: temporal
+  normalize: true
+  waypoint_index: 3
+  checkpoint_path: weights/vint.pth
+  obs_encoding_size: 512
+  late_fusion: false
+  context_size: 5
+  image_size: [85, 64]
+  len_traj_pred: 5
+  learn_angle: true
+
+dataset:
+  image_size: [85, 64]
+  metric_waypoint_spacing: 0.05
+  waypoint_spacing: 2
+  context_size: 5
+  len_traj_pred: 5
+  min_goal_distance: 1
+  max_goal_distance: 20
+  min_action_distance: 0
+  max_action_distance: 10
+  normalize: true
+  learn_angle: true
+  negative_mining: true
+
+collection:
+  dataset_type: train
+  trajectory_name: ""
+  pose_source: amcl
+  sample_dt: 0.5
+  image_format: jpg
+  control_rate: 10.0
+  nav_path_topic: /move_base/NavfnROS/plan
+  nav_cmd_vel_topic: /nav_vel
+  vint_cmd_vel_topic: /vnm/cmd_vel_debug
+  publish_zero_when_idle: true
+  recovery_start_distance: 0.15
+  vint_resume_distance: 0.1
+  angular_recovery_enabled: true
+  angular_recovery_start_error: 0.4
+  angular_recovery_resume_error: 0.05
+  split_trajectory_on_mode_switch: false
+  split_trajectory_on_save_gap: true
+  trajectory_save_gap_factor: 1.1
+  min_trajectory_samples: auto
+
+training:
+  pretrained_weights_path: weights/vint.pth
+  freeze_encoder: false
+  use_test: false
+  tensorboard: true
+  epochs: 20
+  batch_size: 64
+  num_workers: 4
+  learning_rate: 0.00005
+  weight_decay: 0.0001
+  alpha: 0.0
+  gradient_clip: 1.0
+  scheduler: cosine
+  resume: ""

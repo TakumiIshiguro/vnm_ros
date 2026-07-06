@@ -10,26 +10,47 @@ paths:
 
     # test_data_dir: dataset/nav/
 
+model:
+  device: auto
+  model_type: nomad
+  obs_encoder: efficientnet-b0
+  mha_num_attention_heads: 4
+  mha_num_attention_layers: 4
+  mha_ff_dim_factor: 4
+  context_type: temporal
+  normalize: false
+  waypoint_index: 2
+  checkpoint_path: weights/best.pth
+  # checkpoint_path: weights/nomad.pth
+  encoding_size: 256
+  context_size: 3
+  image_size: [96, 96]
+  len_traj_pred: 8
+  learn_angle: false
+  cond_predict_scale: false
+  down_dims: [64, 128, 256]
+  direction_conditioning: true
+  direction_num_commands: 3
+  direction_latent_dim: 64
+  direction_hidden_dim: 64
+  num_diffusion_iters: 10
+  num_action_samples: 8
+  action_noise_scale: 1.0
+  action_sample_strategy: mean
+  cmd_dir_theta_threshold_deg: 15.0
+  action_stats:
+    min: [-2.5, -4.0]
+    max: [5.0, 4.0]
+
 dataset:
-  image_size: [85, 64]
-  metric_waypoint_spacing: 0.05
-  waypoint_spacing: 2
-  context_size: 5
-  len_traj_pred: 5
-  min_goal_distance: 1
-  max_goal_distance: 20
-  min_action_distance: 0
-  max_action_distance: 10
+  waypoint_spacing: 1
   cmd_dir_hold_samples_after_change: auto
-  normalize: true
-  learn_angle: true
-  negative_mining: true
 
 collection:
   dataset_type: train
   trajectory_name: ""
   pose_source: amcl
-  sample_dt: 0.5
+  sample_dt: 0.25
   image_format: jpg
   control_rate: 10.0
   nav_path_topic: /move_base/NavfnROS/plan
@@ -51,8 +72,7 @@ training:
   freeze_encoder: false
   use_test: false
   tensorboard: true
-  plot_training_samples_per_direction: 10
-  epochs: 4
+  epochs: 10
   batch_size: 64
   num_workers: 4
   learning_rate: 0.0001
@@ -60,7 +80,5 @@ training:
   alpha: 0.0
   gradient_clip: 1.0
   scheduler: warmup_cosine
-  warmup_epochs: 2
-  warmup_start_factor: 0.1
-  min_lr_factor: 0.0
+  warmup_epochs: 5
   resume: ""

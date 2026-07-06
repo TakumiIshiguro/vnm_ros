@@ -3,27 +3,36 @@
 `vnm_ros` の設定ファイルと各パラメータの意味を説明します。
 相対パスは基本的に `vnm_ros` パッケージのルートから解決されます。
 
-## model.yaml
+## vint.yaml / nomad.yaml
 
-モデルの構造、重み、推論方法を設定します。`model_type` で使うモデルを
-選び、`common` と選択したモデル専用セクションを結合して読み込みます。
+モデルごとの構造、重み、Dataset作成、学習設定をまとめます。
+どちらを使うかは `runtime.yaml` の `model_type` で選びます。
+`model_type: vint` なら `vint.yaml`、`model_type: nomad` なら
+`nomad.yaml` を読み込みます。
 
 ### top level
 
 | パラメータ | 意味 |
 | --- | --- |
-| `device` | 実行デバイスです。`auto` はCUDAが利用可能ならGPU、それ以外はCPUを使用します。 |
-| `model_type` | 構築するモデル形式です。`vint` または `nomad` を指定します。 |
+| `seed` | Python、NumPy、PyTorchに設定する乱数シードです。 |
+| `device` | 学習デバイスです。`auto` はCUDAが利用可能ならGPU、それ以外はCPUを使用します。 |
 
-推論で読み込む重みは、選択中モデルのセクション内 `checkpoint_path` で指定します。
-例えば `model_type: nomad` の場合は `nomad.checkpoint_path` が推論時に使われます。
-
-### common
-
-ViNTとNoMaDで共通する設定です。
+### paths
 
 | パラメータ | 意味 |
 | --- | --- |
+| `paths.rosbag.path` | Dataset作成とTopomap作成で使うrosbagパスです。 |
+| `paths.dataset.train_data_dir` | 学習軌跡ディレクトリのパスです。 |
+| `paths.dataset.test_data_dir` | テスト軌跡ディレクトリのパスです。 |
+
+### model
+
+モデル構造、推論用checkpoint、推論時のAction選択方法を設定します。
+
+| パラメータ | 意味 |
+| --- | --- |
+| `model_type` | この設定ファイルのモデル形式です。`vint.yaml` は `vint`、`nomad.yaml` は `nomad` です。 |
+| `device` | 推論デバイスです。`auto` はCUDAが利用可能ならGPU、それ以外はCPUを使用します。 |
 | `obs_encoder` | 画像エンコーダです。 |
 | `mha_num_attention_heads` | TransformerのMulti-Head Attentionのヘッド数です。 |
 | `mha_num_attention_layers` | Transformer Encoderの層数です。 |
@@ -31,14 +40,14 @@ ViNTとNoMaDで共通する設定です。
 | `context_type` | コンテキスト形式を表す設定値です。現在の実装では未使用です。 |
 | `normalize` | `true` の場合、モデル出力WaypointのXYを実機用の距離へスケーリングします。 |
 | `waypoint_index` | 予測されたWaypoint列のうち、制御に使用する番号です。0始まりです。 |
+| `checkpoint_path` | 推論で読み込むモデル重みのパスです。 |
 
-### vint
+### vint.yaml の model
 
 ViNT専用、またはViNT checkpointに合わせる設定です。
 
 | パラメータ | 意味 |
 | --- | --- |
-| `checkpoint_path` | ViNTで読み込むモデル重みのパスです。 |
 | `obs_encoding_size` | ViNTの画像特徴ベクトルの次元数です。 |
 | `late_fusion` | 観測画像と目標画像を後段で融合するかを指定します。 |
 | `context_size` | 現在画像より前に使う画像枚数です。 |
@@ -46,13 +55,12 @@ ViNT専用、またはViNT checkpointに合わせる設定です。
 | `len_traj_pred` | モデルが予測する将来Waypoint数です。 |
 | `learn_angle` | `true` の場合、WaypointのXYに加えて向きのcos/sinも学習・出力します。 |
 
-### nomad
+### nomad.yaml の model
 
 NoMaD専用、またはNoMaD checkpointに合わせる設定です。
 
 | パラメータ | 意味 |
 | --- | --- |
-| `checkpoint_path` | NoMaDで読み込むモデル重みのパスです。 |
 | `encoding_size` | NoMaDの条件ベクトル次元数です。 |
 | `context_size` | 現在画像より前に使う画像枚数です。 |
 | `image_size` | モデル入力画像の `[幅, 高さ]` です。 |
@@ -140,26 +148,18 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 | `overlay.rate` | カメラ画像へSubgoal画像、NoMaD Action候補を重ねる周期 `[Hz]` です。 |
 | `overlay.image_size` | 可視化用にpublishするカメラ画像サイズ `[幅, 高さ]` です。モデル入力サイズには影響しません。 |
 
-## training.yaml
+## dataset / collection / training
 
-Dataset作成、ViNT学習、評価をまとめます。
-
-### common
-
-| パラメータ | 意味 |
-| --- | --- |
-| `seed` | Python、NumPy、PyTorchに設定する乱数シードです。 |
-| `device` | 学習デバイスです。`auto`、`cuda`、`cuda:0`、`cpu`などを指定します。 |
-
-### paths
-
-| パラメータ | 意味 |
-| --- | --- |
-| `paths.rosbag.path` | Dataset作成とTopomap作成で使うrosbagパスです。 |
-| `paths.dataset.train_data_dir` | 学習軌跡ディレクトリのパスです。 |
-| `paths.dataset.test_data_dir` | テスト軌跡ディレクトリのパスです。 |
+`vint.yaml` と `nomad.yaml` は、それぞれモデルに対応した
+`dataset`、`collection`、`training` を持ちます。`runtime.yaml` の
+`model_type` で選ばれたファイルの設定だけが使われます。
 
 ### dataset
+
+選択中モデルの学習サンプル生成方法を設定します。読み込み後のコード上では、
+選択された設定が従来通り `dataset` として扱われます。
+
+#### vint.yaml の dataset
 
 | パラメータ | 意味 |
 | --- | --- |
@@ -172,10 +172,16 @@ Dataset作成、ViNT学習、評価をまとめます。
 | `max_goal_distance` | 現在フレームから目標画像までの最大間隔です。 |
 | `min_action_distance` | Action lossを計算する目標距離の下限です。 |
 | `max_action_distance` | Action lossを計算する目標距離の上限です。 |
-| `cmd_dir_hold_samples_after_change` | オンライン収集で `cmd_dir` が切り替わったあと、このサンプル数だけ切替前のラベルを保持して `traj_data.pkl` へ保存します。`auto` の場合、選択中モデルの `len_traj_pred * waypoint_spacing` から自動計算します。手動値が必要値より小さい場合も必要値まで引き上げます。 |
 | `normalize` | `true` の場合、正解WaypointのXYを `metric_waypoint_spacing * waypoint_spacing` で除算します。 |
 | `learn_angle` | `true` の場合、正解Waypointへ向きのcos/sinを追加します。 |
 | `negative_mining` | `true` の場合、学習データの約10%で無関係な目標画像を選びます。 |
+
+#### nomad.yaml の dataset
+
+| パラメータ | 意味 |
+| --- | --- |
+| `waypoint_spacing` | NoMaD方向fine-tuningで、行動系列を何フレームおきに取り出すかを指定します。`image_size`、`context_size`、`len_traj_pred` は `nomad.yaml` の `model` を使います。 |
+| `cmd_dir_hold_samples_after_change` | オンライン収集で `cmd_dir` が切り替わったあと、このサンプル数だけ切替前のラベルを保持して `traj_data.pkl` へ保存します。`auto` の場合、選択中モデルの `len_traj_pred * waypoint_spacing` から自動計算します。手動値が必要値より小さい場合も必要値まで引き上げます。 |
 
 ### collection
 
@@ -203,7 +209,8 @@ Dataset作成、ViNT学習、評価をまとめます。
 
 保存画像は生画像ではなく、現在選択中モデルの `image_size` に合わせて
 4:3 center crop と resize を適用したRGB画像です。NoMaDなら通常
-`nomad.image_size`、ViNTなら `vint.image_size` が使われます。正規化
+`nomad.yaml` の `model.image_size`、ViNTなら `vint.yaml` の
+`model.image_size` が使われます。正規化
 （ImageNet mean/std）は画像ファイルには保存せず、学習・推論時にTensorへ
 変換したあと適用します。
 
@@ -243,6 +250,9 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 
 ### training
 
+選択中モデルの学習方法を設定します。読み込み後のコード上では、
+選択された設定が従来通り `training` として扱われます。
+
 | パラメータ | 意味 |
 | --- | --- |
 | `pretrained_weights_path` | 新規学習時に初期重みとして読み込む事前学習済みモデルです。空文字の場合は初期重みを読み込みません。 |
@@ -256,6 +266,8 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 | `weight_decay` | AdamWのweight decay係数です。 |
 | `alpha` | 距離lossとAction lossの重みです。 |
 | `gradient_clip` | 勾配ノルムの最大値です。0以下にするとクリッピングしません。 |
+| `balance_cmd_dir_sampling` | NoMaD方向fine-tuningで、straight/left/rightの少ないラベルを学習時に出やすくするかを指定します。Datasetファイルは複製せず、DataLoaderのサンプリング確率だけを変えます。 |
+| `cmd_dir_sampling_power` | `balance_cmd_dir_sampling: true` の重み付け強度です。`0.0` は重みなし、`0.5` は弱め、`1.0` はクラス数の逆数でほぼ均等にします。 |
 | `scheduler` | 学習率Schedulerです。`cosine` はCosine Annealing、`warmup_cosine` はwarmup後にcosine減衰します。`none` または空文字で無効化します。 |
 | `warmup_epochs` | `scheduler: warmup_cosine` の場合に、何epochかけて学習率を立ち上げるかを指定します。内部epochは0始まりなので、`1` ならepoch 0だけwarmupです。 |
 | `warmup_start_factor` | warmup開始時の学習率倍率です。`0.1` なら `learning_rate * 0.1` から始めます。 |
@@ -263,5 +275,6 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 | `resume` | 学習を再開するチェックポイントのパスです。空文字なら新規学習です。 |
 
 新規学習時の初期重みは `pretrained_weights_path` を使用します。
-推論用の重みは `model.yaml` の `checkpoint_path` で別に指定します。
+推論用の重みは選択中の `vint.yaml` または `nomad.yaml` の
+`model.checkpoint_path` で別に指定します。
 学習再開時は `resume` が優先され、`pretrained_weights_path` は読み込みません。

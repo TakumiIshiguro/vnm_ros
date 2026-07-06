@@ -51,19 +51,21 @@ def apply_shared_paths(config: Dict[str, Dict[str, Any]]) -> None:
 
 def expand_model_config(model_cfg: Dict[str, Any]) -> Dict[str, Any]:
     model_type = model_cfg["model_type"]
+    if "checkpoint_path" in model_cfg and "common" not in model_cfg:
+        return dict(model_cfg)
     if "checkpoint_path" in model_cfg:
         raise ValueError(
-            "model.yaml top-level checkpoint_path is no longer supported. "
+            "Top-level checkpoint_path is no longer supported with nested model config. "
             "Set checkpoint_path only under the selected model section, "
             f"for example '{model_type}: checkpoint_path: ...'."
         )
     common_cfg = model_cfg.get("common", {})
     type_cfg = model_cfg.get(model_type)
     if type_cfg is None:
-        raise ValueError(f"model.yaml is missing a '{model_type}' section")
+        raise ValueError(f"model config is missing a '{model_type}' section")
     if not type_cfg.get("checkpoint_path"):
         raise ValueError(
-            f"model.yaml section '{model_type}' must define checkpoint_path"
+            f"model config section '{model_type}' must define checkpoint_path"
         )
 
     expanded = {
@@ -74,6 +76,15 @@ def expand_model_config(model_cfg: Dict[str, Any]) -> Dict[str, Any]:
     expanded.update(common_cfg)
     expanded.update(type_cfg)
     return expanded
+
+
+def selected_model_type(runtime_cfg: Dict[str, Any]) -> str:
+    model_type = runtime_cfg.get("model_type")
+    if model_type is None:
+        model_type = runtime_cfg.get("model", {}).get("type")
+    if not model_type:
+        raise ValueError("runtime.yaml must define model_type")
+    return str(model_type)
 
 
 def resolve_path(path: str, base_dir: str = None) -> str:
@@ -88,11 +99,21 @@ def load_runtime_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
     if config_dir is None:
         config_dir = os.path.join(package_root(), "config")
     runtime_cfg = load_yaml(os.path.join(config_dir, "runtime.yaml"))
-    training_cfg = load_yaml(os.path.join(config_dir, "training.yaml"))
+    model_type = selected_model_type(runtime_cfg)
+    model_file_cfg = load_yaml(os.path.join(config_dir, f"{model_type}.yaml"))
+    model_cfg = expand_model_config(model_file_cfg["model"])
+    if model_cfg["model_type"] != model_type:
+        raise ValueError(
+            f"runtime.yaml model_type={model_type} does not match "
+            f"{model_type}.yaml model.model_type={model_cfg['model_type']}"
+        )
+    training_cfg = {key: value for key, value in model_file_cfg.items() if key != "model"}
+    if "device" in training_cfg and "device" not in model_cfg:
+        model_cfg["device"] = training_cfg["device"]
     config = {
         "paths": merge_paths(runtime_cfg, training_cfg),
         "topics": load_yaml(os.path.join(config_dir, "topics.yaml")),
-        "model": expand_model_config(load_yaml(os.path.join(config_dir, "model.yaml"))),
+        "model": model_cfg,
         "robot": runtime_cfg["robot"],
         "topomap": runtime_cfg["topomap"],
         "visualization": runtime_cfg["visualization"],

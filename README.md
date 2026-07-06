@@ -44,9 +44,9 @@ depend on `warmup-scheduler`; it is needed only because the original
 - `scripts/eval.py`: evaluate a checkpoint on the automatically held-out data.
 - `scripts/vnm_node.py`: load model, select subgoal, publish waypoint/cmd_vel.
 - `config/topics.yaml`: ROS topic names and frame id.
-- `config/model.yaml`: model architecture and checkpoint path.
+- `config/vint.yaml`: ViNT model, dataset collection, and training settings.
+- `config/nomad.yaml`: NoMaD model, dataset collection, and training settings.
 - `config/runtime.yaml`: robot, topomap, and visualization settings.
-- `config/training.yaml`: dataset collection, rosbag, and training settings.
 
 ## Usage
 
@@ -56,7 +56,8 @@ Create a topomap:
 roslaunch vnm_ros create_topomap.launch
 ```
 
-Set the required rosbag path in `config/training.yaml`.
+Set `model_type` in `config/runtime.yaml`, then set the required rosbag path in
+the selected `config/vint.yaml` or `config/nomad.yaml`.
 
 Run navigation:
 
@@ -98,7 +99,8 @@ weights/best.pth
 ## Dataset collection
 
 Set the camera and pose topics in `config/topics.yaml`, then select
-`collection.pose_source` in `config/training.yaml`:
+`collection.pose_source` in the selected `config/vint.yaml` or
+`config/nomad.yaml`:
 
 ```yaml
 collection:
@@ -119,8 +121,8 @@ dataset/my_dataset/train/traj_000/
 ```
 
 Set `collection.dataset_type` and `collection.trajectory_name` in
-`config/training.yaml`, and set the bag path in `config/training.yaml` before
-launching.
+the selected `config/vint.yaml` or `config/nomad.yaml`, and set the bag path
+there before launching.
 
 Create a topomap and dataset at the same time:
 
@@ -128,10 +130,12 @@ Create a topomap and dataset at the same time:
 roslaunch vnm_ros create_topomap_and_dataset.launch
 ```
 
-For rosbag input, configure `runtime.yaml` and `training.yaml` before launching.
+For rosbag input, configure `runtime.yaml` and the selected model config before
+launching.
 
 Collection interval, dataset paths, and training parameters are configured in
-`config/training.yaml`. Topomap paths are configured in `config/runtime.yaml`.
+`config/vint.yaml` or `config/nomad.yaml`. Topomap paths are configured in
+`config/runtime.yaml`.
 
 Plot dataset trajectories and training samples to PNG files:
 
