@@ -118,11 +118,27 @@ def main():
         info(f"loaded topomap {topomap_dir} with {len(topo)} nodes")
         info(f"goal_node={goal_node}")
     reached_logged = False
+    waiting_for_cmd_dir_logged = False
 
     while not rospy.is_shutdown():
         reached = False
         if subgoal_selector is not None:
             reached = subgoal_selector.reached_goal()
+
+        if navigation_mode == "explore" and use_cmd_dir_input and action_selector.cmd_dir is None:
+            if not waiting_for_cmd_dir_logged:
+                info(
+                    "waiting for target direction cmd_dir; "
+                    "NoMaD will not publish motion commands until it is received"
+                )
+                waiting_for_cmd_dir_logged = True
+            cmd_debug_pub.publish(Twist())
+            if robot.get("publish_cmd_vel", True):
+                cmd_pub.stop()
+            reached_pub.publish(Bool(data=False))
+            rate.sleep()
+            continue
+        waiting_for_cmd_dir_logged = False
 
         if image_sub.ready() and not reached:
             if navigation_mode == "explore":
