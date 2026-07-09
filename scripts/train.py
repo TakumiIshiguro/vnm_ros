@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-from vnm_ros.datasets import NoMaDDirectionDataset, ViNTDataset
+from vnm_ros.datasets import NoMaDDirectionDataset, ViNTDataset, ViNTDirectionDataset
 from vnm_ros.models.model_loader import (
     build_model,
     freeze_image_encoders,
@@ -21,16 +21,26 @@ from vnm_ros.models.model_loader import (
 from vnm_ros.training.checkpoint import load_training_checkpoint
 from vnm_ros.training.nomad_trainer import NoMaDTrainer
 from vnm_ros.training.trainer import Trainer
-from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
+from vnm_ros.utils.config import load_runtime_config, model_dataset_dir, package_root, resolve_path
 
 
-def make_dataset(config, dataset_type):
+def make_dataset(config, model_cfg, dataset_type):
     dataset = config["dataset"]
-    data_dir_key = (
-        "train_data_dir" if dataset_type == "train" else "test_data_dir"
-    )
+    data_dir = model_dataset_dir(dataset, dataset_type, model_cfg["model_type"])
+    if bool(model_cfg.get("direction_conditioning", False)):
+        return ViNTDirectionDataset(
+            data_dir=data_dir,
+            image_size=dataset["image_size"],
+            context_size=int(dataset["context_size"]),
+            len_traj_pred=int(dataset["len_traj_pred"]),
+            waypoint_spacing=int(dataset["waypoint_spacing"]),
+            metric_waypoint_spacing=float(dataset["metric_waypoint_spacing"]),
+            normalize=bool(dataset["normalize"]),
+            learn_angle=bool(dataset["learn_angle"]),
+            center_crop=bool(model_cfg.get("image_center_crop", False)),
+        )
     return ViNTDataset(
-        data_dir=resolve_path(dataset[data_dir_key], package_root()),
+        data_dir=data_dir,
         image_size=dataset["image_size"],
         context_size=int(dataset["context_size"]),
         len_traj_pred=int(dataset["len_traj_pred"]),
@@ -43,27 +53,31 @@ def make_dataset(config, dataset_type):
         normalize=bool(dataset["normalize"]),
         learn_angle=bool(dataset["learn_angle"]),
         negative_mining=bool(dataset["negative_mining"]) if dataset_type == "train" else False,
+        center_crop=bool(model_cfg.get("image_center_crop", False)),
     )
 
 
 def make_nomad_dataset(config, model_cfg, dataset_type):
     dataset = config["dataset"]
-    data_dir_key = (
-        "train_data_dir" if dataset_type == "train" else "test_data_dir"
-    )
+    data_dir = model_dataset_dir(dataset, dataset_type, model_cfg["model_type"])
     return NoMaDDirectionDataset(
-        data_dir=resolve_path(dataset[data_dir_key], package_root()),
+        data_dir=data_dir,
         image_size=model_cfg["image_size"],
         context_size=int(model_cfg["context_size"]),
         len_traj_pred=int(model_cfg["len_traj_pred"]),
         waypoint_spacing=int(dataset["waypoint_spacing"]),
         action_stats=model_cfg["action_stats"],
+        center_crop=bool(model_cfg.get("image_center_crop", False)),
     )
 
 
 def make_cmd_dir_sampler(dataset, training):
     if not bool(training.get("balance_cmd_dir_sampling", False)):
         return None, None
+    if not hasattr(dataset, "sample_cmd_dir_labels"):
+        raise ValueError(
+            "balance_cmd_dir_sampling requires a direction-conditioned dataset"
+        )
     labels = dataset.sample_cmd_dir_labels()
     class_counts = np.bincount(labels, minlength=3).astype(np.float64)
     present = class_counts > 0.0
@@ -183,7 +197,12 @@ def main():
         pretrained_weights_path = resolve_path(pretrained_weights_path, package_root())
         if not os.path.isfile(pretrained_weights_path):
             raise FileNotFoundError(pretrained_weights_path)
-        load_model_weights(model, pretrained_weights_path, device, strict=True)
+        load_model_weights(
+            model,
+            pretrained_weights_path,
+            device,
+            strict=not bool(model_cfg.get("direction_conditioning", False)),
+        )
         print(f"loaded pretrained model from {pretrained_weights_path}")
 
     frozen_modules = []
@@ -212,14 +231,22 @@ def main():
     use_test = bool(training.get("use_test", True))
     if args.use_test is not None:
         use_test = args.use_test == "true"
-    train_dataset = make_dataset(train_cfg, "train")
-    validation_dataset = make_dataset(train_cfg, "test") if use_test else None
+    train_dataset = make_dataset(train_cfg, model_cfg, "train")
+    validation_dataset = make_dataset(train_cfg, model_cfg, "test") if use_test else None
     loader_args = {
         "batch_size": int(training["batch_size"]),
         "num_workers": int(training["num_workers"]),
         "pin_memory": device.type == "cuda",
     }
-    train_loader = DataLoader(train_dataset, shuffle=True, **loader_args)
+    cmd_dir_sampler, cmd_dir_sampler_info = make_cmd_dir_sampler(
+        train_dataset, training
+    )
+    train_loader = DataLoader(
+        train_dataset,
+        shuffle=cmd_dir_sampler is None,
+        sampler=cmd_dir_sampler,
+        **loader_args,
+    )
     validation_loader = (
         DataLoader(validation_dataset, shuffle=False, **loader_args)
         if validation_dataset is not None
@@ -244,8 +271,8 @@ def main():
         frozen_modules=frozen_modules,
     )
     test_samples = len(validation_dataset) if validation_dataset is not None else 0
-    train_data_dir = resolve_path(
-        train_cfg["dataset"]["train_data_dir"], package_root()
+    train_data_dir = model_dataset_dir(
+        train_cfg["dataset"], "train", model_cfg["model_type"]
     )
     print(
         f"run_name={run_name} run_dir={run_dir} "
@@ -253,12 +280,17 @@ def main():
         f"train_data_dir={train_data_dir} "
         f"device={device} train_samples={len(train_dataset)} "
         f"use_test={use_test} test_samples={test_samples} "
+        f"direction_conditioning={bool(model_cfg.get('direction_conditioning', False))} "
+        f"skipped_mixed_cmd_dir_samples="
+        f"{getattr(train_dataset, 'skipped_mixed_cmd_dir_samples', 0)} "
+        f"balance_cmd_dir_sampling={cmd_dir_sampler is not None} "
+        f"cmd_dir_sampler_info={cmd_dir_sampler_info} "
         f"freeze_encoder={bool(frozen_modules)} "
         f"trainable_parameters={sum(p.numel() for p in trainable_parameters)}"
     )
     if validation_dataset is not None:
-        test_data_dir = resolve_path(
-            train_cfg["dataset"]["test_data_dir"], package_root()
+        test_data_dir = model_dataset_dir(
+            train_cfg["dataset"], "test", model_cfg["model_type"]
         )
         print(
             f"test_dataset_name={dataset_name(test_data_dir)} "
@@ -372,8 +404,8 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         frozen_modules=frozen_modules,
     )
     test_samples = len(validation_dataset) if validation_dataset is not None else 0
-    train_data_dir = resolve_path(
-        train_cfg["dataset"]["train_data_dir"], package_root()
+    train_data_dir = model_dataset_dir(
+        train_cfg["dataset"], "train", model_cfg["model_type"]
     )
     print(
         f"run_name={run_name} run_dir={run_dir} "

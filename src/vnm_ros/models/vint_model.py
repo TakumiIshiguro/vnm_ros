@@ -30,11 +30,13 @@ class ViNT(BaseModel):
         mha_num_attention_heads: Optional[int] = 2,
         mha_num_attention_layers: Optional[int] = 2,
         mha_ff_dim_factor: Optional[int] = 4,
+        direction_encoder: Optional[nn.Module] = None,
     ) -> None:
         super().__init__(context_size, len_traj_pred, learn_angle)
         self.obs_encoding_size = obs_encoding_size
         self.goal_encoding_size = obs_encoding_size
         self.late_fusion = late_fusion
+        self.direction_encoder = direction_encoder
 
         if obs_encoder.split("-")[0] != "efficientnet":
             raise NotImplementedError(
@@ -77,23 +79,31 @@ class ViNT(BaseModel):
         )
 
     def forward(
-        self, obs_img: torch.Tensor, goal_img: torch.Tensor
+        self,
+        obs_img: torch.Tensor,
+        goal_img: torch.Tensor = None,
+        cmd_dir: torch.Tensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self.late_fusion:
-            goal_encoding = self.goal_encoder.extract_features(goal_img)
+        if self.direction_encoder is not None and cmd_dir is not None:
+            goal_encoding = self._direction_token(obs_img, cmd_dir)
         else:
-            obsgoal_img = torch.cat(
-                [obs_img[:, 3 * self.context_size :, :, :], goal_img], dim=1
-            )
-            goal_encoding = self.goal_encoder.extract_features(obsgoal_img)
-        goal_encoding = self.goal_encoder._avg_pooling(goal_encoding)
-        if self.goal_encoder._global_params.include_top:
-            goal_encoding = goal_encoding.flatten(start_dim=1)
-            goal_encoding = self.goal_encoder._dropout(goal_encoding)
-        goal_encoding = self.compress_goal_enc(goal_encoding)
-        if len(goal_encoding.shape) == 2:
-            goal_encoding = goal_encoding.unsqueeze(1)
-        assert goal_encoding.shape[2] == self.goal_encoding_size
+            if goal_img is None:
+                raise ValueError("ViNT requires goal_img when cmd_dir is not provided")
+            if self.late_fusion:
+                goal_encoding = self.goal_encoder.extract_features(goal_img)
+            else:
+                obsgoal_img = torch.cat(
+                    [obs_img[:, 3 * self.context_size :, :, :], goal_img], dim=1
+                )
+                goal_encoding = self.goal_encoder.extract_features(obsgoal_img)
+            goal_encoding = self.goal_encoder._avg_pooling(goal_encoding)
+            if self.goal_encoder._global_params.include_top:
+                goal_encoding = goal_encoding.flatten(start_dim=1)
+                goal_encoding = self.goal_encoder._dropout(goal_encoding)
+            goal_encoding = self.compress_goal_enc(goal_encoding)
+            if len(goal_encoding.shape) == 2:
+                goal_encoding = goal_encoding.unsqueeze(1)
+            assert goal_encoding.shape[2] == self.goal_encoding_size
 
         obs_img = torch.split(obs_img, 3, dim=1)
         obs_img = torch.cat(obs_img, dim=0)
@@ -128,3 +138,18 @@ class ViNT(BaseModel):
                 action_pred[:, :, 2:].clone(), dim=-1
             )
         return dist_pred, action_pred
+
+    def _direction_token(self, obs_img: torch.Tensor, cmd_dir: torch.Tensor):
+        batch_size = obs_img.shape[0]
+        device = obs_img.device
+        dtype = obs_img.dtype
+        cmd_dir = cmd_dir.to(device=device, dtype=dtype)
+        if cmd_dir.ndim == 1:
+            cmd_dir = cmd_dir.reshape(1, -1)
+        if cmd_dir.shape[0] == 1 and batch_size > 1:
+            cmd_dir = cmd_dir.repeat(batch_size, 1)
+        if cmd_dir.shape[0] != batch_size:
+            raise ValueError(
+                f"cmd_dir batch size {cmd_dir.shape[0]} does not match image batch {batch_size}"
+            )
+        return self.direction_encoder(cmd_dir).unsqueeze(1)

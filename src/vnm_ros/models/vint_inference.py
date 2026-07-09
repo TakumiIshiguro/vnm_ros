@@ -28,8 +28,31 @@ class ViNTInference:
 
         return to_numpy(distances), to_numpy(waypoints)
 
+    def predict_explore(self, context_images: List, cmd_dir=None):
+        import torch
+
+        obs = transform_images(context_images, self.config["image_size"]).to(self.device)
+        cmd_dir_tensor = self._cmd_dir_tensor(cmd_dir, batch_size=1, dtype=obs.dtype)
+        with torch.no_grad():
+            _, waypoints = self.model(obs, goal_img=None, cmd_dir=cmd_dir_tensor)
+        return to_numpy(waypoints)
+
     def scale_waypoint(self, waypoint: np.ndarray, max_v: float, model_rate: float):
         if self.config.get("normalize", True):
             waypoint = waypoint.copy()
-            waypoint[:2] *= max_v / model_rate
+            waypoint[..., :2] *= max_v / model_rate
         return waypoint
+
+    def _cmd_dir_tensor(self, cmd_dir, batch_size: int, dtype):
+        import torch
+
+        if not self.config.get("direction_conditioning", False):
+            return None
+        if cmd_dir is None:
+            cmd_dir = [1.0, 0.0, 0.0]
+        cmd_dir_tensor = torch.as_tensor(cmd_dir, dtype=dtype, device=self.device)
+        if cmd_dir_tensor.ndim == 1:
+            cmd_dir_tensor = cmd_dir_tensor.reshape(1, -1)
+        if cmd_dir_tensor.shape[0] == 1 and batch_size > 1:
+            cmd_dir_tensor = cmd_dir_tensor.repeat(batch_size, 1)
+        return cmd_dir_tensor

@@ -53,14 +53,21 @@ class Trainer:
         observation = batch["observation"]
         chunks = torch.split(observation, 3, dim=1)
         observation = torch.cat([self.normalize(chunk) for chunk in chunks], dim=1)
-        goal = self.normalize(batch["goal"])
-        return {
+        prepared = {
             "observation": observation.to(self.device),
-            "goal": goal.to(self.device),
             "distance": batch["distance"].to(self.device),
             "actions": batch["actions"].to(self.device),
             "action_mask": batch["action_mask"].to(self.device),
         }
+        if "goal" in batch:
+            prepared["goal"] = self.normalize(batch["goal"]).to(self.device)
+        else:
+            prepared["goal"] = None
+        if "cmd_dir" in batch:
+            prepared["cmd_dir"] = batch["cmd_dir"].to(self.device)
+        else:
+            prepared["cmd_dir"] = None
+        return prepared
 
     def run_epoch(self, loader, training: bool) -> Dict[str, float]:
         self.model.train(training)
@@ -73,7 +80,9 @@ class Trainer:
             data = self._prepare(batch)
             with torch.set_grad_enabled(training):
                 distance_pred, action_pred = self.model(
-                    data["observation"], data["goal"]
+                    data["observation"],
+                    data["goal"],
+                    cmd_dir=data["cmd_dir"],
                 )
                 losses = compute_losses(
                     distance_pred,

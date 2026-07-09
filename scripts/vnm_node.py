@@ -50,8 +50,13 @@ def main():
     action_sample_strategy = model_cfg.get("action_sample_strategy", "first")
     select_by_cmd_dir = action_sample_strategy == "cmd_dir"
     use_cmd_dir_input = bool(model_cfg.get("direction_conditioning", False)) or select_by_cmd_dir
-    if navigation_mode == "explore" and model_cfg["model_type"] != "nomad":
-        raise ValueError("navigation_mode=explore requires model_type=nomad")
+    if navigation_mode == "explore" and not (
+        model_cfg["model_type"] == "nomad"
+        or bool(model_cfg.get("direction_conditioning", False))
+    ):
+        raise ValueError(
+            "navigation_mode=explore requires NoMaD or direction_conditioning=true"
+        )
 
     topo = None
     subgoal_selector = None
@@ -129,7 +134,7 @@ def main():
             if not waiting_for_cmd_dir_logged:
                 info(
                     "waiting for target direction cmd_dir; "
-                    "NoMaD will not publish motion commands until it is received"
+                    "VNM will not publish motion commands until it is received"
                 )
                 waiting_for_cmd_dir_logged = True
             cmd_debug_pub.publish(Twist())

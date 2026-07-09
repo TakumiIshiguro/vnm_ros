@@ -78,6 +78,14 @@ def freeze_image_encoders(model):
 
 
 def _build_vint(config: Dict):
+    direction_encoder = None
+    if bool(config.get("direction_conditioning", False)):
+        direction_encoder = DirectionEncoder(
+            embedding_dim=int(config["obs_encoding_size"]),
+            input_dim=int(config.get("direction_num_commands", 3)),
+            hidden_dim=int(config.get("direction_hidden_dim", 64)),
+            latent_dim=int(config.get("direction_latent_dim", 64)),
+        )
     return ViNT(
         context_size=config["context_size"],
         len_traj_pred=config["len_traj_pred"],
@@ -88,6 +96,7 @@ def _build_vint(config: Dict):
         mha_num_attention_heads=config["mha_num_attention_heads"],
         mha_num_attention_layers=config["mha_num_attention_layers"],
         mha_ff_dim_factor=config["mha_ff_dim_factor"],
+        direction_encoder=direction_encoder,
     )
 
 
@@ -141,7 +150,10 @@ def build_model(config: Dict):
 
 def load_model(checkpoint_path: str, config: Dict, device):
     model = build_model(config)
-    default_strict = config["model_type"] != "nomad"
+    default_strict = (
+        config["model_type"] != "nomad"
+        and not bool(config.get("direction_conditioning", False))
+    )
     strict = bool(config.get("strict_load", default_strict))
     load_model_weights(model, checkpoint_path, device, strict=strict)
     model.to(device)
