@@ -2,7 +2,7 @@ paths:
   topomap:
     topomap_dir: topomaps/topomap
 
-model_type: nomad
+model_type: vint
 
 robot:
   navigation_mode: explore

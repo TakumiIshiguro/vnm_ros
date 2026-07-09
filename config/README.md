@@ -54,6 +54,10 @@ ViNT専用、またはViNT checkpointに合わせる設定です。
 | `image_size` | モデル入力画像の `[幅, 高さ]` です。 |
 | `len_traj_pred` | モデルが予測する将来Waypoint数です。 |
 | `learn_angle` | `true` の場合、WaypointのXYに加えて向きのcos/sinも学習・出力します。 |
+| `direction_conditioning` | `true` の場合、`cmd_dir` のラベルindexから学習可能なlatent `z_i` を選び、MLPでTransformer入力用の方向tokenへ変換します。exploreではgoal画像tokenの代わりに `obs tokens + direction token` を使います。 |
+| `direction_num_commands` | 方向コマンド数です。通常はstraight/left/rightの3です。 |
+| `direction_latent_dim` | コマンドごとの学習可能latent `z_i` の次元数です。 |
+| `direction_hidden_dim` | `z_i` から方向tokenを作るMLPの隠れ層次元数です。 |
 
 ### nomad.yaml の model
 
@@ -92,7 +96,7 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 | パラメータ | 意味 |
 | --- | --- |
 | `image_topic` | 推論、Topomap作成、Dataset作成に使うカメラ画像です。 |
-| `cmd_dir_topic` | NoMaD探索モードで行動候補選択に使う `scenario_navigation_msgs/cmd_dir_intersection` です。 |
+| `cmd_dir_topic` | ViNT/NoMaDの方向conditioned exploreで使う `scenario_navigation_msgs/cmd_dir_intersection` です。 |
 | `odometry_topic` | Datasetへ位置とyawを保存するためのオドメトリです。 |
 | `amcl_pose_topic` | Datasetへ位置とyawを保存するためのAMCL自己位置です。 |
 | `waypoint_topic` | 選択したWaypointの配信先です。 |
@@ -175,6 +179,12 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 | `normalize` | `true` の場合、正解WaypointのXYを `metric_waypoint_spacing * waypoint_spacing` で除算します。 |
 | `learn_angle` | `true` の場合、正解Waypointへ向きのcos/sinを追加します。 |
 | `negative_mining` | `true` の場合、学習データの約10%で無関係な目標画像を選びます。 |
+| `cmd_dir_hold_samples_after_change` | オンライン収集で `cmd_dir` が切り替わったあと、このサンプル数だけ切替前のラベルを保持して `traj_data.pkl` へ保存します。`auto` の場合、選択中モデルの `len_traj_pred * waypoint_spacing` から自動計算します。 |
+
+`model.direction_conditioning: true` のViNT方向fine-tuningでは目標画像を使わないため、
+distance labelは予測する行動系列の終端までのtemporal distanceとして
+`len_traj_pred` を使います。実時間に直す場合は
+`len_traj_pred * waypoint_spacing * collection.sample_dt` 秒です。
 
 #### nomad.yaml の dataset
 
@@ -208,14 +218,22 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 | `min_trajectory_samples` | trajectoryを保存・切替する最小サンプル数です。`auto` の場合、選択中モデルの `(context_size + len_traj_pred) * waypoint_spacing + 1` から自動計算します。手動値が必要値より小さい場合も必要値まで引き上げます。 |
 
 保存画像は生画像ではなく、現在選択中モデルの `image_size` に合わせて
-4:3 center crop と resize を適用したRGB画像です。NoMaDなら通常
-`nomad.yaml` の `model.image_size`、ViNTなら `vint.yaml` の
-`model.image_size` が使われます。正規化
+resize を適用したRGB画像です。`model.image_center_crop: true` の場合だけ
+4:3 center crop後にresizeします。NoMaDなら通常 `nomad.yaml` の
+`model.image_size`、ViNTなら `vint.yaml` の `model.image_size` が使われます。正規化
 （ImageNet mean/std）は画像ファイルには保存せず、学習・推論時にTensorへ
 変換したあと適用します。
 
+学習時は保存済み画像サイズが現在の設定と一致するか検証します。例えば
+NoMaD用に `96x96` で作成したDatasetをViNTの `85x64` 学習へ流用すると
+エラーになります。モデルを切り替える場合は、同じbagから
+`roslaunch vnm_ros create_dataset.launch` を実行し直して、選択中モデル用の
+Datasetを作成してください。
+Datasetは `train_data_dir` または `test_data_dir` を基準ディレクトリとして、
+`vint/<trajectory_name>`、`nomad/<trajectory_name>` の形で保存されます。
+
 Dataset作成時に `cmd_dir_topic` がbagに含まれている場合、各保存サンプルへ
-最新の `cmd_dir` one-hotラベルも保存します。NoMaD方向fine-tuningではこの
+最新の `cmd_dir` one-hotラベルも保存します。方向fine-tuningではこの
 保存済みラベルを使用します。未収録データは互換性のためstraight `[1, 0, 0]`
 として扱われます。
 
@@ -264,9 +282,9 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 | `num_workers` | PyTorch DataLoaderの並列読込プロセス数です。 |
 | `learning_rate` | AdamW Optimizerの初期学習率です。 |
 | `weight_decay` | AdamWのweight decay係数です。 |
-| `alpha` | 距離lossとAction lossの重みです。 |
+| `alpha` | 距離lossとAction lossの重みです。総lossは `alpha * 1e-2 * distance_loss + (1 - alpha) * action_loss` です。 |
 | `gradient_clip` | 勾配ノルムの最大値です。0以下にするとクリッピングしません。 |
-| `balance_cmd_dir_sampling` | NoMaD方向fine-tuningで、straight/left/rightの少ないラベルを学習時に出やすくするかを指定します。Datasetファイルは複製せず、DataLoaderのサンプリング確率だけを変えます。 |
+| `balance_cmd_dir_sampling` | 方向fine-tuningで、straight/left/rightの少ないラベルを学習時に出やすくするかを指定します。Datasetファイルは複製せず、DataLoaderのサンプリング確率だけを変えます。 |
 | `cmd_dir_sampling_power` | `balance_cmd_dir_sampling: true` の重み付け強度です。`0.0` は重みなし、`0.5` は弱め、`1.0` はクラス数の逆数でほぼ均等にします。 |
 | `scheduler` | 学習率Schedulerです。`cosine` はCosine Annealing、`warmup_cosine` はwarmup後にcosine減衰します。`none` または空文字で無効化します。 |
 | `warmup_epochs` | `scheduler: warmup_cosine` の場合に、何epochかけて学習率を立ち上げるかを指定します。内部epochは0始まりなので、`1` ならepoch 0だけwarmupです。 |
