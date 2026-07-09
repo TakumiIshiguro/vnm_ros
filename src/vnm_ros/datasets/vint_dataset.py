@@ -24,6 +24,7 @@ class ViNTDataset(TrajectoryDataset):
         normalize: bool = True,
         learn_angle: bool = True,
         negative_mining: bool = True,
+        center_crop: bool = False,
     ):
         self.image_size = tuple(image_size)
         self.context_size = context_size
@@ -37,6 +38,7 @@ class ViNTDataset(TrajectoryDataset):
         self.normalize = normalize
         self.learn_angle = learn_angle
         self.negative_mining = negative_mining
+        self.center_crop = bool(center_crop)
         super().__init__(data_dir)
         self.samples = self._build_index()
         self.goal_candidates = [
@@ -91,10 +93,21 @@ class ViNTDataset(TrajectoryDataset):
 
         context_indices = current + np.arange(-self.context_size, 1) * self.waypoint_spacing
         observations = torch.cat(
-            [load_image(self.image_path(name, int(i)), self.image_size) for i in context_indices],
+            [
+                load_image(
+                    self.image_path(name, int(i)),
+                    self.image_size,
+                    center_crop=self.center_crop,
+                )
+                for i in context_indices
+            ],
             dim=0,
         )
-        goal = load_image(self.image_path(goal_name, goal_index), self.image_size)
+        goal = load_image(
+            self.image_path(goal_name, goal_index),
+            self.image_size,
+            center_crop=self.center_crop,
+        )
 
         if negative:
             distance = float(self.max_goal_distance)

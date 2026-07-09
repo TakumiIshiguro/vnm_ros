@@ -13,6 +13,7 @@ paths:
 model:
   device: auto
   model_type: nomad
+  image_center_crop: false
   obs_encoder: efficientnet-b0
   mha_num_attention_heads: 4
   mha_num_attention_layers: 4

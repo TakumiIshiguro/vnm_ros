@@ -39,7 +39,20 @@ def center_crop_resize(pil_img: PILImage.Image, image_size: List[int]) -> PILIma
     return pil_img.resize(tuple(image_size))
 
 
-def transform_images(pil_imgs, image_size: List[int], center_crop: bool = True):
+def preprocess_image(
+    pil_img: PILImage.Image,
+    image_size: List[int],
+    center_crop: bool = False,
+) -> PILImage.Image:
+    pil_img = pil_img.convert("RGB")
+    if pil_img.size == tuple(image_size):
+        return pil_img
+    if center_crop:
+        return center_crop_resize(pil_img, image_size)
+    return pil_img.resize(tuple(image_size))
+
+
+def transform_images(pil_imgs, image_size: List[int], center_crop: bool = False):
     import torch
     from torchvision import transforms
 
@@ -58,12 +71,7 @@ def transform_images(pil_imgs, image_size: List[int], center_crop: bool = True):
 
     tensors = []
     for pil_img in pil_imgs:
-        pil_img = pil_img.convert("RGB")
-        if center_crop:
-            if pil_img.size != tuple(image_size):
-                pil_img = center_crop_resize(pil_img, image_size)
-        else:
-            pil_img = pil_img.resize(tuple(image_size))
+        pil_img = preprocess_image(pil_img, image_size, center_crop=center_crop)
         tensors.append(torch.unsqueeze(transform(pil_img), 0))
     return torch.cat(tensors, dim=1)
 

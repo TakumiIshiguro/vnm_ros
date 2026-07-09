@@ -7,7 +7,7 @@ import torch
 from PIL import Image
 from torchvision.transforms import functional as TF
 
-from vnm_ros.utils.image_utils import center_crop_resize
+from vnm_ros.utils.image_utils import preprocess_image
 
 
 def numeric_image_files(directory: str) -> List[str]:
@@ -19,10 +19,13 @@ def numeric_image_files(directory: str) -> List[str]:
     return sorted(files, key=lambda name: int(os.path.splitext(name)[0]))
 
 
-def load_image(path: str, image_size: Sequence[int]) -> torch.Tensor:
+def load_image(
+    path: str,
+    image_size: Sequence[int],
+    center_crop: bool = False,
+) -> torch.Tensor:
     image = Image.open(path).convert("RGB")
-    if image.size != tuple(image_size):
-        image = center_crop_resize(image, image_size)
+    image = preprocess_image(image, image_size, center_crop=center_crop)
     return TF.to_tensor(image)
 
 

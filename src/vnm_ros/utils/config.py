@@ -95,6 +95,12 @@ def resolve_path(path: str, base_dir: str = None) -> str:
     return os.path.abspath(os.path.join(base_dir, path))
 
 
+def model_dataset_dir(dataset_cfg: Dict[str, Any], dataset_type: str, model_type: str) -> str:
+    data_dir_key = "train_data_dir" if dataset_type == "train" else "test_data_dir"
+    base_dir = resolve_path(dataset_cfg[data_dir_key], package_root())
+    return os.path.join(base_dir, str(model_type))
+
+
 def load_runtime_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
     if config_dir is None:
         config_dir = os.path.join(package_root(), "config")

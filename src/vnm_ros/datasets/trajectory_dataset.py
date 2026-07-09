@@ -3,6 +3,7 @@ import pickle
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
+from PIL import Image
 from torch.utils.data import Dataset
 
 from vnm_ros.datasets.dataset_utils import numeric_image_files
@@ -39,10 +40,44 @@ class TrajectoryDataset(Dataset):
                 raise ValueError(
                     f"{name}: images={len(files)}, positions={length}, yaw={len(trajectory['yaw'])}"
                 )
+            self._validate_image_size(name, trajectory_dir, files)
             validate = getattr(self, "_validate_trajectory", None)
             if validate is not None:
                 validate(name, trajectory, length)
             self._image_files[name] = files
+
+    def _validate_image_size(self, name: str, trajectory_dir: str, files: List[str]):
+        expected = getattr(self, "image_size", None)
+        if expected is None:
+            return
+        expected = tuple(int(v) for v in expected)
+        metadata = self.trajectory(name).get("metadata", {})
+        saved_size = metadata.get("image_size")
+        if saved_size is not None and tuple(saved_size) != expected:
+            raise ValueError(
+                f"{name}: dataset image_size={tuple(saved_size)} does not match "
+                f"training image_size={expected}. Recreate this dataset from the "
+                "source bag with the selected model config."
+            )
+        saved_center_crop = metadata.get("image_center_crop")
+        expected_center_crop = getattr(self, "center_crop", None)
+        if saved_center_crop is not None and expected_center_crop is not None:
+            if bool(saved_center_crop) != bool(expected_center_crop):
+                raise ValueError(
+                    f"{name}: dataset image_center_crop={bool(saved_center_crop)} "
+                    f"does not match training image_center_crop="
+                    f"{bool(expected_center_crop)}. Recreate this dataset from "
+                    "the source bag with the selected model config."
+                )
+        first_image = os.path.join(trajectory_dir, files[0])
+        with Image.open(first_image) as image:
+            actual = image.size
+        if actual != expected:
+            raise ValueError(
+                f"{name}: image file size={actual} does not match training "
+                f"image_size={expected}. Recreate this dataset from the source "
+                "bag instead of reusing a dataset made for another model."
+            )
 
     def trajectory(self, name: str) -> dict:
         if name not in self._trajectories:

@@ -16,6 +16,7 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         len_traj_pred: int,
         waypoint_spacing: int,
         action_stats: dict,
+        center_crop: bool = False,
         trajectory_names: Optional[Sequence[str]] = None,
     ):
         self.image_size = tuple(image_size)
@@ -24,6 +25,7 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         self.waypoint_spacing = int(waypoint_spacing)
         self.action_min = np.asarray(action_stats["min"], dtype=np.float32)
         self.action_max = np.asarray(action_stats["max"], dtype=np.float32)
+        self.center_crop = bool(center_crop)
         self.skipped_mixed_cmd_dir_samples = 0
         super().__init__(data_dir, trajectory_names=trajectory_names)
         self.samples = self._build_index()
@@ -87,7 +89,11 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         context_indices = current + np.arange(-self.context_size, 1) * self.waypoint_spacing
         observations = torch.cat(
             [
-                load_image(self.image_path(name, int(i)), self.image_size)
+                load_image(
+                    self.image_path(name, int(i)),
+                    self.image_size,
+                    center_crop=self.center_crop,
+                )
                 for i in context_indices
             ],
             dim=0,

@@ -15,8 +15,8 @@ from scenario_navigation_msgs.msg import cmd_dir_intersection
 from sensor_msgs.msg import Image
 
 from vnm_ros.datasets.cmd_dir_utils import CmdDirHoldFilter
-from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
-from vnm_ros.utils.image_utils import center_crop_resize, msg_to_pil
+from vnm_ros.utils.config import load_runtime_config, model_dataset_dir, package_root
+from vnm_ros.utils.image_utils import msg_to_pil, preprocess_image
 from vnm_ros.utils.logger import info, warn
 
 
@@ -114,13 +114,15 @@ class NavRecoveryDatasetCollector:
         if dataset_type not in ("train", "test"):
             raise ValueError(f"dataset_type must be train or test: {dataset_type}")
         self.trajectory_name_prefix = self.collection_cfg["trajectory_name"]
-        data_dir_key = "train_data_dir" if dataset_type == "train" else "test_data_dir"
-        self.data_dir = resolve_path(self.dataset_cfg[data_dir_key], package_root())
+        self.data_dir = model_dataset_dir(
+            self.dataset_cfg, dataset_type, self.model_cfg["model_type"]
+        )
         os.makedirs(self.data_dir, exist_ok=True)
 
         self.sample_dt = float(self.collection_cfg["sample_dt"])
         self.extension = self.collection_cfg.get("image_format", "jpg")
         self.image_size = tuple(self.model_cfg["image_size"])
+        self.center_crop = bool(self.model_cfg.get("image_center_crop", False))
         (
             self.cmd_dir_hold_samples_after_change,
             self.required_cmd_dir_hold_samples,
@@ -234,7 +236,7 @@ class NavRecoveryDatasetCollector:
             f"split_trajectory_on_save_gap={self.split_trajectory_on_save_gap} "
             f"trajectory_save_gap_factor={self.trajectory_save_gap_factor:.3f} "
             f"publish_zero_when_idle={self.publish_zero_when_idle}"
-            f" saved_image_size={self.image_size}"
+            f" saved_image_size={self.image_size} center_crop={self.center_crop}"
         )
 
     def image_callback(self, msg):
@@ -385,9 +387,10 @@ class NavRecoveryDatasetCollector:
         if self.latest_image_time - self.last_saved < self.sample_dt:
             return
         index = len(self.positions)
-        image = center_crop_resize(
+        image = preprocess_image(
             msg_to_pil(self.latest_image),
             self.image_size,
+            center_crop=self.center_crop,
         )
         image.save(os.path.join(self.trajectory_dir, f"{index}.{self.extension}"))
         self.positions.append(self.current_position.copy())
@@ -465,6 +468,16 @@ class NavRecoveryDatasetCollector:
             "position": np.asarray(self.positions, dtype=np.float32),
             "yaw": np.asarray(self.yaws, dtype=np.float32),
             "cmd_dir": np.asarray(self.cmd_dirs, dtype=np.float32),
+            "metadata": {
+                "model_type": self.model_cfg["model_type"],
+                "image_size": list(self.image_size),
+                "image_center_crop": self.center_crop,
+                "sample_dt": self.sample_dt,
+                "source": "online",
+                "image_topic": self.image_topic,
+                "pose_source": self.pose_source,
+                "pose_topic": self.pose_topic,
+            },
         }
         with open(os.path.join(self.trajectory_dir, "traj_data.pkl"), "wb") as f:
             pickle.dump(traj_data, f)

@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import numpy as np
 import rospy
 
-from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
-from vnm_ros.utils.image_utils import center_crop_resize, msg_to_pil
+from vnm_ros.utils.config import load_runtime_config, model_dataset_dir, package_root, resolve_path
+from vnm_ros.utils.image_utils import msg_to_pil, preprocess_image
 from vnm_ros.utils.logger import info, warn
 
 
@@ -69,8 +69,7 @@ def main():
     trajectory_name = collection_cfg["trajectory_name"]
     name = trajectory_name or datetime.now().strftime("traj_%Y%m%d_%H%M%S")
     bag_path = required_bag_path(collection_cfg.get("bag_path", ""))
-    data_dir_key = "train_data_dir" if dataset_type == "train" else "test_data_dir"
-    data_dir = resolve_path(dataset_cfg[data_dir_key], package_root())
+    data_dir = model_dataset_dir(dataset_cfg, dataset_type, model_cfg["model_type"])
     trajectory_dir = os.path.join(data_dir, name)
     if os.path.exists(trajectory_dir):
         raise FileExistsError(trajectory_dir)
@@ -95,6 +94,17 @@ def main():
                     "position": np.asarray(positions, dtype=np.float32),
                     "yaw": np.asarray(yaws, dtype=np.float32),
                     "cmd_dir": np.asarray(cmd_dirs, dtype=np.float32),
+                    "metadata": {
+                        "model_type": model_cfg["model_type"],
+                        "image_size": list(image_size),
+                        "image_center_crop": center_crop,
+                        "sample_dt": sample_dt,
+                        "source": "bag",
+                        "bag_path": bag_path,
+                        "image_topic": image_topic,
+                        "pose_source": pose_source,
+                        "pose_topic": pose_topic,
+                    },
                 },
                 f,
             )
@@ -110,10 +120,12 @@ def main():
     current_cmd_dir = np.array([1.0, 0.0, 0.0], dtype=np.float32)
     extension = collection_cfg.get("image_format", "jpg")
     image_size = tuple(model_cfg["image_size"])
+    center_crop = bool(model_cfg.get("image_center_crop", False))
     info(
         f"creating {dataset_type} trajectory {name} every "
         f"{sample_dt:.3f}s from bag {bag_path} using "
-        f"{pose_source} pose {pose_topic} saved_image_size={image_size}"
+        f"{pose_source} pose {pose_topic} saved_image_size={image_size} "
+        f"center_crop={center_crop}"
     )
     with rosbag.Bag(bag_path, "r") as bag:
         bag_topics = [image_topic, pose_topic]
@@ -132,7 +144,11 @@ def main():
             if msg_time - last_saved < sample_dt:
                 continue
             index = len(positions)
-            image = center_crop_resize(msg_to_pil(msg), image_size)
+            image = preprocess_image(
+                msg_to_pil(msg),
+                image_size,
+                center_crop=center_crop,
+            )
             image.save(os.path.join(trajectory_dir, f"{index}.{extension}"))
             positions.append(current_position.copy())
             yaws.append(float(current_yaw))
