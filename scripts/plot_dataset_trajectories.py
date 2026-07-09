@@ -10,10 +10,11 @@ import yaml
 from PIL import Image
 from PIL import ImageDraw
 
-from vnm_ros.datasets.nomad_direction_dataset import NoMaDDirectionDataset
 from vnm_ros.datasets.dataset_utils import to_local_coords
+from vnm_ros.datasets.nomad_direction_dataset import NoMaDDirectionDataset
 from vnm_ros.datasets.trajectory_dataset import TrajectoryDataset
-from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
+from vnm_ros.datasets.vint_direction_dataset import ViNTDirectionDataset
+from vnm_ros.utils.config import load_runtime_config, model_dataset_dir, package_root, resolve_path
 from vnm_ros.utils.logger import info
 
 
@@ -327,11 +328,49 @@ def make_nomad_dataset(cfg, data_dir, trajectory_names):
         len_traj_pred=int(model_cfg["len_traj_pred"]),
         waypoint_spacing=int(dataset_cfg["waypoint_spacing"]),
         action_stats=model_cfg["action_stats"],
+        center_crop=bool(model_cfg.get("image_center_crop", False)),
         trajectory_names=trajectory_names,
     )
 
 
-def render_training_samples(dataset, output_dir, count_per_direction):
+def make_vint_dataset(cfg, data_dir, trajectory_names):
+    model_cfg = cfg["model"]
+    dataset_cfg = cfg["train"]["dataset"]
+    return ViNTDirectionDataset(
+        data_dir=data_dir,
+        image_size=dataset_cfg["image_size"],
+        context_size=int(dataset_cfg["context_size"]),
+        len_traj_pred=int(dataset_cfg["len_traj_pred"]),
+        waypoint_spacing=int(dataset_cfg["waypoint_spacing"]),
+        metric_waypoint_spacing=float(dataset_cfg["metric_waypoint_spacing"]),
+        normalize=bool(dataset_cfg["normalize"]),
+        learn_angle=bool(dataset_cfg["learn_angle"]),
+        center_crop=bool(model_cfg.get("image_center_crop", False)),
+        trajectory_names=trajectory_names,
+    )
+
+
+def make_direction_dataset(cfg, data_dir, trajectory_names):
+    model_type = cfg["model"]["model_type"]
+    if model_type == "nomad":
+        return make_nomad_dataset(cfg, data_dir, trajectory_names)
+    if model_type == "vint" and bool(cfg["model"].get("direction_conditioning", False)):
+        return make_vint_dataset(cfg, data_dir, trajectory_names)
+    raise ValueError(
+        "training sample previews require NoMaD or ViNT with direction_conditioning=true"
+    )
+
+
+def resize_to_height(image, target_height):
+    target_height = int(target_height)
+    if target_height <= 0 or image.height == target_height:
+        return image.copy()
+    scale = target_height / max(image.height, 1)
+    target_size = (max(1, int(round(image.width * scale))), target_height)
+    return image.resize(target_size, Image.Resampling.BILINEAR)
+
+
+def render_training_samples(dataset, output_dir, count_per_direction, preview_image_height):
     if count_per_direction == 0:
         return []
     os.makedirs(output_dir, exist_ok=True)
@@ -360,25 +399,40 @@ def render_training_samples(dataset, output_dir, count_per_direction):
         context_images = []
         for context_index in context_indices:
             with Image.open(dataset.image_path(name, int(context_index))) as source:
-                context_images.append(source.convert("RGB").resize((128, 128)))
+                context_images.append(resize_to_height(source, preview_image_height))
 
-        canvas_width = 64 + len(context_images) * 144 + 328
-        canvas = Image.new("RGB", (canvas_width, 320), (250, 250, 250))
+        image_gap = 16
+        image_top = 64
+        image_widths = [image.width for image in context_images]
+        image_heights = [image.height for image in context_images]
+        max_image_height = max(image_heights) if image_heights else 0
+        images_width = sum(image_widths) + image_gap * max(len(context_images) - 1, 0)
+        traj_width = 304
+        traj_height = 256
+        traj_gap = 24
+        canvas_width = 24 + images_width + traj_gap + traj_width + 24
+        canvas_height = max(320, image_top + max_image_height + 32, 48 + traj_height + 16)
+        canvas = Image.new("RGB", (canvas_width, canvas_height), (250, 250, 250))
         draw = ImageDraw.Draw(canvas)
         draw.text((24, 18), f"{preview_id:04d} {name} idx={current} cmd={cmd_name}", fill=(20, 20, 20))
+        x = 24
         for image_id, image in enumerate(context_images):
-            x = 24 + image_id * 144
-            canvas.paste(image, (x, 64))
+            canvas.paste(image, (x, image_top))
             frame_color = (30, 140, 70) if image_id == len(context_images) - 1 else (170, 170, 170)
-            draw.rectangle((x, 64, x + 128, 192), outline=frame_color, width=3)
+            draw.rectangle(
+                (x, image_top, x + image.width, image_top + image.height),
+                outline=frame_color,
+                width=3,
+            )
             label = "current" if image_id == len(context_images) - 1 else f"t-{len(context_images) - 1 - image_id}"
             draw.text((x, 42), f"{label} idx={int(context_indices[image_id])}", fill=(20, 20, 20))
+            x += image.width + image_gap
 
-        traj_x0 = 48 + len(context_images) * 144
+        traj_x0 = 24 + images_width + traj_gap
         draw.text((traj_x0, 18), "teacher trajectory in robot frame", fill=(20, 20, 20))
         draw_local_trajectory(
             draw,
-            (traj_x0, 48, traj_x0 + 304, 304),
+            (traj_x0, 48, traj_x0 + traj_width, 48 + traj_height),
             local_positions,
             colors.get(cmd_name, colors["none"]),
         )
@@ -454,7 +508,13 @@ def main():
         "--training-samples-per-direction",
         type=int,
         default=10,
-        help="NoMaD training sample previews per direction. Use -1 for all, 0 to disable.",
+        help="Direction training sample previews per direction. Use -1 for all, 0 to disable.",
+    )
+    parser.add_argument(
+        "--preview-image-height",
+        type=int,
+        default=160,
+        help="Preview image height in pixels. Aspect ratio is preserved.",
     )
     args, unknown_args = parser.parse_known_args()
     unexpected_args = [
@@ -464,11 +524,15 @@ def main():
         parser.error(f"unrecognized arguments: {' '.join(unexpected_args)}")
 
     cfg = load_runtime_config(args.config_dir)
+    model_cfg = cfg["model"]
     dataset_cfg = cfg["train"]["dataset"]
     visualization_cfg = cfg["visualization"]["dataset"]
     dataset_type = args.dataset_type or visualization_cfg["dataset_type"]
-    data_dir_key = "train_data_dir" if dataset_type == "train" else "test_data_dir"
-    data_dir = resolve_path(dataset_cfg[data_dir_key], package_root())
+    data_dir = model_dataset_dir(dataset_cfg, dataset_type, model_cfg["model_type"])
+    if not os.path.isdir(data_dir):
+        raise FileNotFoundError(
+            f"{data_dir}. Create a {model_cfg['model_type']} dataset first."
+        )
     trajectory_name = (
         args.trajectory_name
         if args.trajectory_name is not None
@@ -522,14 +586,16 @@ def main():
 
     training_sample_count = 0
     if args.training_samples_per_direction != 0:
-        if cfg["model"]["model_type"] != "nomad":
-            info("skipped training sample previews because model_type is not nomad")
+        try:
+            sample_dataset = make_direction_dataset(cfg, data_dir, trajectory_names)
+        except ValueError as exc:
+            info(f"skipped training sample previews: {exc}")
         else:
-            sample_dataset = make_nomad_dataset(cfg, data_dir, trajectory_names)
             training_sample_paths = render_training_samples(
                 sample_dataset,
                 os.path.join(output_dir, "training_samples"),
                 args.training_samples_per_direction,
+                args.preview_image_height,
             )
             training_sample_count = len(training_sample_paths)
 
