@@ -143,8 +143,10 @@ Plot dataset trajectories and training samples to PNG files:
 roslaunch vnm_ros plot_dataset_trajectories.launch
 ```
 
-The launch writes `overview.png`, per-trajectory plots, and NoMaD training
-sample previews under `plots/dataset/<train|test>/`.
+The launch writes `overview.png`, per-trajectory plots, and direction training
+sample previews under `plots/dataset/<dataset>/<model_type>/<train|test>/`.
+Trajectory plots include a 1 m world-coordinate grid by default; override it
+with `grid_spacing_m:=0.5` or disable it with `grid_spacing_m:=0`.
 
 ## Training
 

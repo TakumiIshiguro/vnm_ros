@@ -64,6 +64,22 @@ def resolve_optional_path(path):
     return os.path.abspath(path)
 
 
+def default_output_dir(data_dir, dataset_type):
+    normalized = os.path.normpath(data_dir)
+    try:
+        relative = os.path.relpath(normalized, package_root())
+    except ValueError:
+        relative = os.path.basename(normalized)
+    if relative.startswith(".."):
+        relative = os.path.basename(normalized)
+    parts = [part for part in relative.split(os.sep) if part and part != "."]
+    if parts and parts[0] == "dataset":
+        parts = parts[1:]
+    if not parts:
+        parts = [os.path.basename(normalized)]
+    return os.path.join(package_root(), "plots", "dataset", *parts, dataset_type)
+
+
 def select_trajectories(data_dir, requested_name):
     if requested_name:
         return [requested_name]
@@ -182,6 +198,32 @@ class MapCanvas:
         pixels = pixels * self.display_scale
         return pixels
 
+    def visible_world_bounds(self):
+        if self.map_image is None:
+            return self.bounds
+        if self.crop_box is None:
+            x0, y0 = 0, 0
+            x1, y1 = self.map_image.width - 1, self.map_image.height - 1
+        else:
+            x0, y0, x1, y1 = self.crop_box
+        corners = np.asarray(
+            [
+                [x0, y0],
+                [x1, y0],
+                [x1, y1],
+                [x0, y1],
+            ],
+            dtype=np.float64,
+        )
+        world_x = corners[:, 0] * self.resolution + self.origin[0]
+        world_y = (self.map_image.height - 1 - corners[:, 1]) * self.resolution + self.origin[1]
+        return (
+            float(np.min(world_x)),
+            float(np.min(world_y)),
+            float(np.max(world_x)),
+            float(np.max(world_y)),
+        )
+
 
 def bounds_for_positions(position_sets, padding=1.0):
     all_positions = np.concatenate(position_sets, axis=0)
@@ -208,6 +250,42 @@ def draw_direction_segments(draw, pixels, cmd_dirs, width):
             fill=color,
             width=width,
         )
+
+
+def draw_world_grid(draw, canvas, image, spacing_m):
+    spacing_m = float(spacing_m)
+    if spacing_m <= 0.0:
+        return
+    x_min, y_min, x_max, y_max = canvas.visible_world_bounds()
+    x_start = np.floor(x_min / spacing_m) * spacing_m
+    x_end = np.ceil(x_max / spacing_m) * spacing_m
+    y_start = np.floor(y_min / spacing_m) * spacing_m
+    y_end = np.ceil(y_max / spacing_m) * spacing_m
+    grid_color = (205, 205, 205) if canvas.map_image is None else (165, 165, 165)
+    axis_color = (145, 145, 145) if canvas.map_image is None else (110, 110, 110)
+    width = 1
+
+    x_values = np.arange(x_start, x_end + spacing_m * 0.5, spacing_m)
+    for x in x_values:
+        pixels = canvas.world_to_pixel([[x, y_min], [x, y_max]])
+        color = axis_color if abs(x) < spacing_m * 0.5 else grid_color
+        draw.line(
+            [tuple(map(float, pixels[0])), tuple(map(float, pixels[1]))],
+            fill=color,
+            width=width,
+        )
+
+    y_values = np.arange(y_start, y_end + spacing_m * 0.5, spacing_m)
+    for y in y_values:
+        pixels = canvas.world_to_pixel([[x_min, y], [x_max, y]])
+        color = axis_color if abs(y) < spacing_m * 0.5 else grid_color
+        draw.line(
+            [tuple(map(float, pixels[0])), tuple(map(float, pixels[1]))],
+            fill=color,
+            width=width,
+        )
+
+    draw.rectangle((0, 0, image.width - 1, image.height - 1), outline=(120, 120, 120), width=1)
 
 
 def draw_start_end(draw, pixels):
@@ -287,14 +365,24 @@ def preview_indices_per_direction(dataset, count_per_direction):
     return selected
 
 
-def draw_local_trajectory(draw, box, points, color):
+def draw_local_trajectory(
+    draw,
+    box,
+    points,
+    color,
+    grid_spacing_m=0.1,
+    expected_forward_m=None,
+):
     x0, y0, x1, y1 = box
     width = x1 - x0
     height = y1 - y0
     margin = 28
     points = np.asarray(points, dtype=np.float32)
+    expected_forward_m = (
+        None if expected_forward_m is None else max(float(expected_forward_m), 0.0)
+    )
     max_abs_y = max(float(np.max(np.abs(points[:, 1]))), 0.1)
-    max_x = max(float(np.max(points[:, 0])), 0.1)
+    max_x = max(float(np.max(points[:, 0])), expected_forward_m or 0.0, 0.1)
     scale = min((width - 2 * margin) / (2.0 * max_abs_y), (height - 2 * margin) / max_x)
     origin = (x0 + width // 2, y1 - margin)
 
@@ -304,8 +392,21 @@ def draw_local_trajectory(draw, box, points, color):
         return (px, py)
 
     draw.rectangle(box, outline=(190, 190, 190), width=1)
-    draw.line((origin[0], y0 + margin, origin[0], y1 - margin), fill=(220, 220, 220))
-    draw.line((x0 + margin, origin[1], x1 - margin, origin[1]), fill=(220, 220, 220))
+    grid_spacing_m = float(grid_spacing_m)
+    if grid_spacing_m > 0.0:
+        grid_color = (230, 230, 230)
+        for forward_x in np.arange(0.0, max_x + grid_spacing_m * 0.01, grid_spacing_m):
+            left = project((forward_x, -max_abs_y))
+            right = project((forward_x, max_abs_y))
+            draw.line((left[0], left[1], right[0], right[1]), fill=grid_color)
+        y_grid_min = np.floor(-max_abs_y / grid_spacing_m) * grid_spacing_m
+        y_grid_max = np.ceil(max_abs_y / grid_spacing_m) * grid_spacing_m
+        for lateral_y in np.arange(y_grid_min, y_grid_max + grid_spacing_m * 0.5, grid_spacing_m):
+            near = project((0.0, lateral_y))
+            far = project((max_x, lateral_y))
+            draw.line((near[0], near[1], far[0], far[1]), fill=grid_color)
+    draw.line((origin[0], y0 + margin, origin[0], y1 - margin), fill=(200, 200, 200))
+    draw.line((x0 + margin, origin[1], x1 - margin, origin[1]), fill=(200, 200, 200))
     projected = [project(point) for point in points]
     if len(projected) >= 2:
         draw.line(projected, fill=color, width=4, joint="curve")
@@ -384,6 +485,13 @@ def render_training_samples(dataset, output_dir, count_per_direction, preview_im
     written = []
     selected_samples = preview_indices_per_direction(dataset, count_per_direction)
     direction_counts = {"straight": 0, "left": 0, "right": 0}
+    expected_forward_m = None
+    if hasattr(dataset, "metric_waypoint_spacing"):
+        expected_forward_m = (
+            float(dataset.metric_waypoint_spacing)
+            * int(dataset.waypoint_spacing)
+            * int(dataset.len_traj_pred)
+        )
     for preview_id, (_, sample_index) in enumerate(selected_samples):
         name, current = dataset.samples[sample_index]
         trajectory = dataset.trajectory(name)
@@ -435,6 +543,7 @@ def render_training_samples(dataset, output_dir, count_per_direction, preview_im
             (traj_x0, 48, traj_x0 + traj_width, 48 + traj_height),
             local_positions,
             colors.get(cmd_name, colors["none"]),
+            expected_forward_m=expected_forward_m,
         )
         direction_id = direction_counts.get(cmd_name, 0)
         direction_counts[cmd_name] = direction_id + 1
@@ -455,11 +564,12 @@ def remove_pngs(directory):
             os.remove(os.path.join(directory, name))
 
 
-def render_trajectory(name, trajectory, canvas, output_path):
+def render_trajectory(name, trajectory, canvas, output_path, grid_spacing_m):
     positions = trajectory["position"]
     cmd_dirs = trajectory.get("cmd_dir")
     image = canvas.make(positions)
     draw = ImageDraw.Draw(image)
+    draw_world_grid(draw, canvas, image, grid_spacing_m)
     pixels = canvas.world_to_pixel(positions)
     draw_direction_segments(draw, pixels, cmd_dirs, width=4)
     draw_start_end(draw, pixels)
@@ -475,10 +585,11 @@ def render_trajectory(name, trajectory, canvas, output_path):
     image.save(output_path)
 
 
-def render_overview(dataset, trajectory_names, canvas, output_path):
+def render_overview(dataset, trajectory_names, canvas, output_path, grid_spacing_m):
     position_sets = [dataset.trajectory(name)["position"] for name in trajectory_names]
     image = canvas.make(np.concatenate(position_sets, axis=0))
     draw = ImageDraw.Draw(image)
+    draw_world_grid(draw, canvas, image, grid_spacing_m)
     for index, name in enumerate(trajectory_names):
         positions = dataset.trajectory(name)["position"]
         pixels = canvas.world_to_pixel(positions)
@@ -504,6 +615,7 @@ def main():
     parser.add_argument("--no-map", action="store_true")
     parser.add_argument("--image-size", type=int, default=1200)
     parser.add_argument("--padding-m", type=float, default=1.0)
+    parser.add_argument("--grid-spacing-m", type=float, default=1.0)
     parser.add_argument(
         "--training-samples-per-direction",
         type=int,
@@ -547,8 +659,10 @@ def main():
         if map_yaml and not os.path.isfile(map_yaml):
             raise FileNotFoundError(map_yaml)
 
-    output_dir = args.output_dir or os.path.join(
-        package_root(), "plots", "dataset", dataset_type
+    output_dir = (
+        default_output_dir(data_dir, dataset_type)
+        if args.output_dir in (None, "", "auto")
+        else args.output_dir
     )
     os.makedirs(output_dir, exist_ok=True)
     trajectories_dir = os.path.join(output_dir, "trajectories")
@@ -566,7 +680,13 @@ def main():
         padding_m=args.padding_m,
     )
     overview_path = os.path.join(output_dir, "overview.png")
-    render_overview(dataset, trajectory_names, overview_canvas, overview_path)
+    render_overview(
+        dataset,
+        trajectory_names,
+        overview_canvas,
+        overview_path,
+        args.grid_spacing_m,
+    )
 
     for name in trajectory_names:
         trajectory = dataset.trajectory(name)
@@ -582,6 +702,7 @@ def main():
             trajectory,
             canvas,
             os.path.join(trajectories_dir, f"{name}.png"),
+            args.grid_spacing_m,
         )
 
     training_sample_count = 0
