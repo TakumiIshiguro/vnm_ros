@@ -3,10 +3,10 @@ device: auto
 
 paths:
   rosbag:
-    path: "/home/takumi/bags/sim.bag"
+    path: "/home/takumi/bags/sim_0.2.bag"
   dataset:
     # train_data_dir: dataset/my_dataset/train
-    train_data_dir: dataset/nav/
+    train_data_dir: dataset/0.2_4hz/
 
     # test_data_dir: dataset/nav/
 
@@ -19,34 +19,34 @@ model:
   mha_ff_dim_factor: 4
   context_type: temporal
   normalize: true
-  waypoint_index: 3
-  checkpoint_path: weights/vint.pth
+  waypoint_index: 1
+  checkpoint_path: weights/vint/best.pth
   obs_encoding_size: 512
   late_fusion: false
   context_size: 5
   image_size: [85, 64]
   len_traj_pred: 5
   learn_angle: true
+  direction_conditioning: true
+  direction_num_commands: 3
+  direction_latent_dim: 64
+  direction_hidden_dim: 64
 
 dataset:
   image_size: [85, 64]
-  metric_waypoint_spacing: 0.05
-  waypoint_spacing: 2
+  metric_waypoint_spacing: 0.06
+  waypoint_spacing: 1
   context_size: 5
   len_traj_pred: 5
-  min_goal_distance: 1
-  max_goal_distance: 20
-  min_action_distance: 0
-  max_action_distance: 10
   normalize: true
   learn_angle: true
-  negative_mining: true
+  cmd_dir_hold_samples_after_change: auto
 
 collection:
   dataset_type: train
   trajectory_name: ""
   pose_source: amcl
-  sample_dt: 0.5
+  sample_dt: 0.3
   image_format: jpg
   control_rate: 10.0
   nav_path_topic: /move_base/NavfnROS/plan
@@ -65,15 +65,18 @@ collection:
 
 training:
   pretrained_weights_path: weights/vint.pth
-  freeze_encoder: false
+  freeze_layers: []
   use_test: false
   tensorboard: true
-  epochs: 20
+  epochs: 100
   batch_size: 64
   num_workers: 4
-  learning_rate: 0.00005
+  learning_rate: 0.0001
   weight_decay: 0.0001
-  alpha: 0.0
+  alpha: 0.5
   gradient_clip: 1.0
-  scheduler: cosine
+  cmd_dir_loss_weighting: false
+  cmd_dir_loss_weight_power: 1.0
+  scheduler: warmup_cosine
+  warmup_epochs: 10
   resume: ""

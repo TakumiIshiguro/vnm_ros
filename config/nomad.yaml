@@ -3,10 +3,10 @@ device: auto
 
 paths:
   rosbag:
-    path: "/home/takumi/bags/sim.bag"
+    path: "/home/takumi/bags/sim_0.2.bag"
   dataset:
     # train_data_dir: dataset/my_dataset/train
-    train_data_dir: dataset/nav/
+    train_data_dir: dataset/0.2_3hz/
 
     # test_data_dir: dataset/nav/
 
@@ -21,7 +21,7 @@ model:
   context_type: temporal
   normalize: false
   waypoint_index: 2
-  checkpoint_path: weights/best.pth
+  checkpoint_path: weights/nomad/best.pth
   # checkpoint_path: weights/nomad.pth
   encoding_size: 256
   context_size: 3
@@ -51,7 +51,7 @@ collection:
   dataset_type: train
   trajectory_name: ""
   pose_source: amcl
-  sample_dt: 0.25
+  sample_dt: 0.5
   image_format: jpg
   control_rate: 10.0
   nav_path_topic: /move_base/NavfnROS/plan
@@ -70,7 +70,14 @@ collection:
 
 training:
   pretrained_weights_path: weights/nomad.pth
-  freeze_encoder: false
+  freeze_dist_pred_net: true
+  freeze_layers:
+    # - vision_encoder.obs_encoder
+    # - vision_encoder.goal_encoder
+    # - vision_encoder.compress_obs_enc
+    # - vision_encoder.compress_goal_enc
+    # - vision_encoder.sa_encoder
+    # - noise_pred_net
   use_test: false
   tensorboard: true
   epochs: 10
@@ -80,6 +87,8 @@ training:
   weight_decay: 0.0001
   alpha: 0.0
   gradient_clip: 1.0
+  cmd_dir_loss_weighting: false
+  cmd_dir_loss_weight_power: 1.0
   scheduler: warmup_cosine
-  warmup_epochs: 5
+  warmup_epochs: 4
   resume: ""

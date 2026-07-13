@@ -260,9 +260,13 @@ Dataset軌跡をRVizなしで確認する場合は、地図画像上へtrajector
 roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 ```
 
-出力先はデフォルトで `vnm_ros/plots/dataset/<train|test>/` です。`overview.png`
-に全軌跡、`trajectories/` に各軌跡ごとの画像を保存します。NoMaDの場合は
-`training_samples/` に実際に学習に使うcontext画像列と教師軌跡も保存します。
+出力先はデフォルトでDatasetディレクトリ名を使った
+`vnm_ros/plots/dataset/<dataset>/<model_type>/<train|test>/` です。
+`overview.png` に全軌跡、`trajectories/` に各軌跡ごとの画像を保存します。
+軌跡画像にはデフォルトで1m間隔のworld座標グリッドを描画します。
+間隔は `grid_spacing_m` で変更でき、0以下にすると非表示です。
+方向conditioned Datasetの場合は `training_samples/` に実際に学習に使う
+context画像列と教師軌跡も保存します。
 `training_samples_per_direction` でstraight/left/rightそれぞれ何枚保存するかを
 指定できます。`-1` なら各方向の学習サンプルを全件保存し、`0` なら保存しません。
 
@@ -274,7 +278,8 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 | パラメータ | 意味 |
 | --- | --- |
 | `pretrained_weights_path` | 新規学習時に初期重みとして読み込む事前学習済みモデルです。空文字の場合は初期重みを読み込みません。 |
-| `freeze_encoder` | `true` の場合、画像Encoderを固定して学習します。 |
+| `freeze_dist_pred_net` | NoMaDで `true` の場合、距離予測headを固定します。 |
+| `freeze_layers` | 固定するmodule名またはparameter prefixのリストです。`model.named_modules()` の名前を指定します。例: `vision_encoder.obs_encoder`、`vision_encoder.sa_encoder.layers.0`、`noise_pred_net`、`obs_encoder._blocks.0`。 |
 | `use_test` | `true` の場合、各epochでtest Datasetを評価します。 |
 | `tensorboard` | TensorBoardログを保存するかを指定します。 |
 | `epochs` | 学習する総epoch数です。 |
@@ -284,8 +289,8 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 | `weight_decay` | AdamWのweight decay係数です。 |
 | `alpha` | 距離lossとAction lossの重みです。総lossは `alpha * 1e-2 * distance_loss + (1 - alpha) * action_loss` です。 |
 | `gradient_clip` | 勾配ノルムの最大値です。0以下にするとクリッピングしません。 |
-| `balance_cmd_dir_sampling` | 方向fine-tuningで、straight/left/rightの少ないラベルを学習時に出やすくするかを指定します。Datasetファイルは複製せず、DataLoaderのサンプリング確率だけを変えます。 |
-| `cmd_dir_sampling_power` | `balance_cmd_dir_sampling: true` の重み付け強度です。`0.0` は重みなし、`0.5` は弱め、`1.0` はクラス数の逆数でほぼ均等にします。 |
+| `cmd_dir_loss_weighting` | 方向fine-tuningで、straight/left/rightのデータ数に応じてlossへ逆頻度重みを掛けるかを指定します。DataLoaderのサンプリング確率は変えません。 |
+| `cmd_dir_loss_weight_power` | `cmd_dir_loss_weighting: true` の重み付け強度です。`0.0` は重みなし、`1.0` は方向ごとのサンプル数の逆数を使います。 |
 | `scheduler` | 学習率Schedulerです。`cosine` はCosine Annealing、`warmup_cosine` はwarmup後にcosine減衰します。`none` または空文字で無効化します。 |
 | `warmup_epochs` | `scheduler: warmup_cosine` の場合に、何epochかけて学習率を立ち上げるかを指定します。内部epochは0始まりなので、`1` ならepoch 0だけwarmupです。 |
 | `warmup_start_factor` | warmup開始時の学習率倍率です。`0.1` なら `learning_rate * 0.1` から始めます。 |
@@ -295,4 +300,20 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 新規学習時の初期重みは `pretrained_weights_path` を使用します。
 推論用の重みは選択中の `vint.yaml` または `nomad.yaml` の
 `model.checkpoint_path` で別に指定します。
+NoMaDなら `vision_encoder.obs_encoder`、`vision_encoder.goal_encoder`、
+`vision_encoder.sa_encoder.layers.0`、`noise_pred_net`、`dist_pred_net` など、
+ViNTなら `obs_encoder`、`goal_encoder`、`decoder.sa_decoder.layers.0`、
+`direction_encoder`、`action_predictor` などを指定できます。
+指定できるmodule名は以下で確認できます。
+
+```bash
+rosrun vnm_ros train.py --config-dir $(rospack find vnm_ros)/config --list-freeze-layers
+```
+
+方向conditioned Datasetで学習する場合、TensorBoardには全体lossに加えて
+`train/direction/<straight|left|right>/...` と
+`test/direction/<straight|left|right>/...` の方向別lossも記録します。
+学習結果はアーキテクチャごとに `runs/<model_type>/<run_name>/` と
+`weights/<model_type>/` へ保存されます。例えばViNTは `weights/vint/best.pth`、
+NoMaDは `weights/nomad/best.pth` がbest checkpointです。
 学習再開時は `resume` が優先され、`pretrained_weights_path` は読み込みません。
