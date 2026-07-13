@@ -63,20 +63,6 @@ def load_model_weights(model, checkpoint_path: str, device, strict: bool = True)
     return checkpoint
 
 
-def freeze_image_encoders(model):
-    encoders = []
-    for name in ("obs_encoder", "goal_encoder"):
-        encoder = getattr(model, name, None)
-        if encoder is None:
-            raise AttributeError(
-                f"{type(model).__name__} does not have required image encoder: {name}"
-            )
-        encoder.requires_grad_(False)
-        encoder.eval()
-        encoders.append(encoder)
-    return encoders
-
-
 def _build_vint(config: Dict):
     direction_encoder = None
     if bool(config.get("direction_conditioning", False)):

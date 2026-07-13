@@ -8,6 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Normalize
 
 from vnm_ros.training.checkpoint import save_checkpoint
+from vnm_ros.training.trainer import CMD_DIR_NAMES, cmd_dir_labels
 
 
 class NoMaDTrainer:
@@ -24,6 +25,7 @@ class NoMaDTrainer:
         gradient_clip: float = 0.0,
         enable_tensorboard: bool = True,
         frozen_modules=None,
+        cmd_dir_loss_weights=None,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -35,6 +37,11 @@ class NoMaDTrainer:
         self.config = config
         self.gradient_clip = gradient_clip
         self.frozen_modules = list(frozen_modules or [])
+        self.cmd_dir_loss_weights = (
+            torch.as_tensor(cmd_dir_loss_weights, dtype=torch.float32, device=device)
+            if cmd_dir_loss_weights is not None
+            else None
+        )
         self.writer = (
             SummaryWriter(log_dir=os.path.join(run_dir, "tensorboard"))
             if enable_tensorboard
@@ -47,6 +54,12 @@ class NoMaDTrainer:
         )
         os.makedirs(run_dir, exist_ok=True)
         os.makedirs(weights_dir, exist_ok=True)
+
+    def _sample_loss_weights(self, cmd_dir):
+        if self.cmd_dir_loss_weights is None:
+            return None
+        labels = cmd_dir_labels(cmd_dir)
+        return self.cmd_dir_loss_weights[labels]
 
     def _prepare(self, batch):
         observation = batch["observation"]
@@ -81,8 +94,8 @@ class NoMaDTrainer:
         for module in self.frozen_modules:
             module.eval()
 
-        total_loss = 0.0
-        sample_count = 0
+        totals = {}
+        counts = {}
         for batch in loader:
             data = self._prepare(batch)
             batch_size = data["actions"].shape[0]
@@ -104,7 +117,16 @@ class NoMaDTrainer:
                     timestep=timesteps,
                     global_cond=obs_cond,
                 )
-                loss = F.mse_loss(noise_pred, noise)
+                per_sample_loss = F.mse_loss(
+                    noise_pred, noise, reduction="none"
+                ).mean(dim=tuple(range(1, noise_pred.ndim)))
+                sample_weights = self._sample_loss_weights(data["cmd_dir"])
+                if sample_weights is None:
+                    loss = per_sample_loss.mean()
+                else:
+                    loss = (
+                        per_sample_loss * sample_weights
+                    ).sum() / sample_weights.sum().clamp_min(1.0)
                 if training:
                     self.optimizer.zero_grad(set_to_none=True)
                     loss.backward()
@@ -113,9 +135,19 @@ class NoMaDTrainer:
                             self.model.parameters(), self.gradient_clip
                         )
                     self.optimizer.step()
-            total_loss += float(loss.item()) * batch_size
-            sample_count += batch_size
-        return {"loss": total_loss / max(sample_count, 1)}
+            totals["loss"] = totals.get("loss", 0.0) + float(loss.item()) * batch_size
+            counts["loss"] = counts.get("loss", 0) + batch_size
+            labels = cmd_dir_labels(data["cmd_dir"])
+            for index, name in enumerate(CMD_DIR_NAMES):
+                selection = labels == index
+                count = int(selection.sum().item())
+                if count <= 0:
+                    continue
+                key = f"direction/{name}/loss"
+                value = float(per_sample_loss[selection].mean().item())
+                totals[key] = totals.get(key, 0.0) + value * count
+                counts[key] = counts.get(key, 0) + count
+        return {key: value / max(counts[key], 1) for key, value in totals.items()}
 
     def fit(self, train_loader, validation_loader, start_epoch: int, epochs: int):
         history_path = os.path.join(self.run_dir, "metrics.jsonl")

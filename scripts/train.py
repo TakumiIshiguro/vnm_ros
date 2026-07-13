@@ -10,12 +10,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader
 
 from vnm_ros.datasets import NoMaDDirectionDataset, ViNTDataset, ViNTDirectionDataset
 from vnm_ros.models.model_loader import (
     build_model,
-    freeze_image_encoders,
     load_model_weights,
 )
 from vnm_ros.training.checkpoint import load_training_checkpoint
@@ -71,38 +70,33 @@ def make_nomad_dataset(config, model_cfg, dataset_type):
     )
 
 
-def make_cmd_dir_sampler(dataset, training):
-    if not bool(training.get("balance_cmd_dir_sampling", False)):
+def make_cmd_dir_loss_weights(dataset, training):
+    if not bool(training.get("cmd_dir_loss_weighting", False)):
         return None, None
     if not hasattr(dataset, "sample_cmd_dir_labels"):
         raise ValueError(
-            "balance_cmd_dir_sampling requires a direction-conditioned dataset"
+            "cmd_dir_loss_weighting requires a direction-conditioned dataset"
         )
     labels = dataset.sample_cmd_dir_labels()
     class_counts = np.bincount(labels, minlength=3).astype(np.float64)
     present = class_counts > 0.0
     if np.count_nonzero(present) <= 1:
         raise ValueError(
-            "balance_cmd_dir_sampling requires at least two cmd_dir classes "
+            "cmd_dir_loss_weighting requires at least two cmd_dir classes "
             f"in the training dataset, got counts={class_counts.astype(int).tolist()}"
         )
-    power = float(training.get("cmd_dir_sampling_power", 0.5))
+    power = float(training.get("cmd_dir_loss_weight_power", 1.0))
     if power < 0.0:
-        raise ValueError("cmd_dir_sampling_power must be >= 0")
+        raise ValueError("cmd_dir_loss_weight_power must be >= 0")
     class_weights = np.zeros_like(class_counts, dtype=np.float64)
     class_weights[present] = np.power(1.0 / class_counts[present], power)
-    sample_weights = class_weights[labels]
-    sampler = WeightedRandomSampler(
-        weights=torch.as_tensor(sample_weights, dtype=torch.double),
-        num_samples=len(sample_weights),
-        replacement=True,
-    )
+    class_weights *= len(labels) / np.sum(class_weights[labels])
     info = {
         "counts": class_counts.astype(int).tolist(),
         "weights": class_weights.tolist(),
         "power": power,
     }
-    return sampler, info
+    return class_weights.astype(np.float32), info
 
 
 def dataset_name(data_dir):
@@ -111,6 +105,71 @@ def dataset_name(data_dir):
     if directory_name in ("train", "test"):
         return os.path.basename(os.path.dirname(normalized))
     return directory_name
+
+
+def architecture_name(model_cfg):
+    return str(model_cfg["model_type"])
+
+
+def training_artifact_dirs(model_cfg, run_name):
+    architecture = architecture_name(model_cfg)
+    run_dir = resolve_path(os.path.join("runs", architecture, run_name), package_root())
+    weights_dir = resolve_path(os.path.join("weights", architecture), package_root())
+    return run_dir, weights_dir
+
+
+def freeze_named_layers(model, layer_names):
+    if not layer_names:
+        return [], []
+    modules = dict(model.named_modules())
+    frozen_modules = []
+    frozen_names = []
+    seen_modules = set()
+    for layer_name in layer_names:
+        layer_name = str(layer_name).strip()
+        if not layer_name:
+            continue
+        module = modules.get(layer_name)
+        if module is None:
+            matches = [
+                name for name, _ in model.named_parameters()
+                if name == layer_name or name.startswith(layer_name + ".")
+            ]
+            if not matches:
+                available = ", ".join(sorted(name for name in modules if name)[:30])
+                raise ValueError(
+                    f"freeze_layers entry not found: {layer_name}. "
+                    f"Use a module or parameter prefix from model.named_modules(). "
+                    f"Examples: {available}"
+                )
+            for param_name, parameter in model.named_parameters():
+                if param_name == layer_name or param_name.startswith(layer_name + "."):
+                    parameter.requires_grad_(False)
+            frozen_names.append(layer_name)
+            continue
+        module.requires_grad_(False)
+        module.eval()
+        if id(module) not in seen_modules:
+            frozen_modules.append(module)
+            seen_modules.add(id(module))
+        frozen_names.append(layer_name)
+    return frozen_modules, frozen_names
+
+
+def frozen_parameter_count(model):
+    return sum(p.numel() for p in model.parameters() if not p.requires_grad)
+
+
+def print_freeze_layer_names(model):
+    try:
+        for name, module in model.named_modules():
+            if name:
+                print(f"{name}\t{type(module).__name__}")
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except OSError:
+            pass
 
 
 def build_scheduler(optimizer, training):
@@ -156,6 +215,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-dir", default=None)
     parser.add_argument("--use-test", choices=["true", "false"], default=None)
+    parser.add_argument("--list-freeze-layers", action="store_true")
     args, unknown_args = parser.parse_known_args()
     unexpected_args = [
         arg for arg in unknown_args if not arg.startswith("__") and ":=" not in arg
@@ -189,6 +249,9 @@ def main():
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device_name)
     model = build_model(model_cfg).to(device)
+    if args.list_freeze_layers:
+        print_freeze_layer_names(model)
+        return
 
     training = train_cfg["training"]
     resume = training.get("resume", "")
@@ -206,8 +269,12 @@ def main():
         print(f"loaded pretrained model from {pretrained_weights_path}")
 
     frozen_modules = []
-    if bool(training.get("freeze_encoder", False)):
-        frozen_modules = freeze_image_encoders(model)
+    frozen_layer_names = []
+    layer_modules, layer_names = freeze_named_layers(
+        model, training.get("freeze_layers", [])
+    )
+    frozen_modules.extend(layer_modules)
+    frozen_layer_names.extend(layer_names)
 
     trainable_parameters = [p for p in model.parameters() if p.requires_grad]
     if not trainable_parameters:
@@ -238,13 +305,12 @@ def main():
         "num_workers": int(training["num_workers"]),
         "pin_memory": device.type == "cuda",
     }
-    cmd_dir_sampler, cmd_dir_sampler_info = make_cmd_dir_sampler(
+    cmd_dir_loss_weights, cmd_dir_loss_weight_info = make_cmd_dir_loss_weights(
         train_dataset, training
     )
     train_loader = DataLoader(
         train_dataset,
-        shuffle=cmd_dir_sampler is None,
-        sampler=cmd_dir_sampler,
+        shuffle=True,
         **loader_args,
     )
     validation_loader = (
@@ -253,8 +319,7 @@ def main():
         else None
     )
     run_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    run_dir = resolve_path(os.path.join("runs", run_name), package_root())
-    weights_dir = resolve_path("weights", package_root())
+    run_dir, weights_dir = training_artifact_dirs(model_cfg, run_name)
     checkpoint_train_cfg = dict(train_cfg)
     checkpoint_train_cfg["run_name"] = run_name
     trainer = Trainer(
@@ -269,13 +334,15 @@ def main():
         gradient_clip=float(training.get("gradient_clip", 0.0)),
         enable_tensorboard=bool(training.get("tensorboard", True)),
         frozen_modules=frozen_modules,
+        cmd_dir_loss_weights=cmd_dir_loss_weights,
     )
     test_samples = len(validation_dataset) if validation_dataset is not None else 0
     train_data_dir = model_dataset_dir(
         train_cfg["dataset"], "train", model_cfg["model_type"]
     )
     print(
-        f"run_name={run_name} run_dir={run_dir} "
+        f"run_name={run_name} architecture={architecture_name(model_cfg)} "
+        f"run_dir={run_dir} weights_dir={weights_dir} "
         f"dataset_name={dataset_name(train_data_dir)} "
         f"train_data_dir={train_data_dir} "
         f"device={device} train_samples={len(train_dataset)} "
@@ -283,9 +350,10 @@ def main():
         f"direction_conditioning={bool(model_cfg.get('direction_conditioning', False))} "
         f"skipped_mixed_cmd_dir_samples="
         f"{getattr(train_dataset, 'skipped_mixed_cmd_dir_samples', 0)} "
-        f"balance_cmd_dir_sampling={cmd_dir_sampler is not None} "
-        f"cmd_dir_sampler_info={cmd_dir_sampler_info} "
-        f"freeze_encoder={bool(frozen_modules)} "
+        f"cmd_dir_loss_weighting={cmd_dir_loss_weights is not None} "
+        f"cmd_dir_loss_weight_info={cmd_dir_loss_weight_info} "
+        f"freeze_layers={frozen_layer_names} "
+        f"frozen_parameters={frozen_parameter_count(model)} "
         f"trainable_parameters={sum(p.numel() for p in trainable_parameters)}"
     )
     if validation_dataset is not None:
@@ -310,6 +378,9 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device_name)
     model = build_model(model_cfg).to(device)
+    if args.list_freeze_layers:
+        print_freeze_layer_names(model)
+        return
 
     training = train_cfg["training"]
     resume = training.get("resume", "")
@@ -322,14 +393,17 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         print(f"loaded pretrained NoMaD model from {pretrained_weights_path}")
 
     frozen_modules = []
-    if bool(training.get("freeze_encoder", True)):
-        model.vision_encoder.requires_grad_(False)
-        model.vision_encoder.eval()
-        frozen_modules.append(model.vision_encoder)
+    frozen_layer_names = []
     if bool(training.get("freeze_dist_pred_net", True)):
         model.dist_pred_net.requires_grad_(False)
         model.dist_pred_net.eval()
         frozen_modules.append(model.dist_pred_net)
+        frozen_layer_names.append("dist_pred_net")
+    layer_modules, layer_names = freeze_named_layers(
+        model, training.get("freeze_layers", [])
+    )
+    frozen_modules.extend(layer_modules)
+    frozen_layer_names.extend(layer_names)
 
     trainable_parameters = [p for p in model.parameters() if p.requires_grad]
     if not trainable_parameters:
@@ -371,13 +445,12 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         "num_workers": int(training["num_workers"]),
         "pin_memory": device.type == "cuda",
     }
-    cmd_dir_sampler, cmd_dir_sampler_info = make_cmd_dir_sampler(
+    cmd_dir_loss_weights, cmd_dir_loss_weight_info = make_cmd_dir_loss_weights(
         train_dataset, training
     )
     train_loader = DataLoader(
         train_dataset,
-        shuffle=cmd_dir_sampler is None,
-        sampler=cmd_dir_sampler,
+        shuffle=True,
         **loader_args,
     )
     validation_loader = (
@@ -386,8 +459,7 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         else None
     )
     run_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    run_dir = resolve_path(os.path.join("runs", run_name), package_root())
-    weights_dir = resolve_path("weights", package_root())
+    run_dir, weights_dir = training_artifact_dirs(model_cfg, run_name)
     checkpoint_train_cfg = dict(train_cfg)
     checkpoint_train_cfg["run_name"] = run_name
     trainer = NoMaDTrainer(
@@ -402,13 +474,15 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         gradient_clip=float(training.get("gradient_clip", 0.0)),
         enable_tensorboard=bool(training.get("tensorboard", True)),
         frozen_modules=frozen_modules,
+        cmd_dir_loss_weights=cmd_dir_loss_weights,
     )
     test_samples = len(validation_dataset) if validation_dataset is not None else 0
     train_data_dir = model_dataset_dir(
         train_cfg["dataset"], "train", model_cfg["model_type"]
     )
     print(
-        f"run_name={run_name} run_dir={run_dir} "
+        f"run_name={run_name} architecture={architecture_name(model_cfg)} "
+        f"run_dir={run_dir} weights_dir={weights_dir} "
         f"dataset_name={dataset_name(train_data_dir)} "
         f"train_data_dir={train_data_dir} "
         f"device={device} train_samples={len(train_dataset)} "
@@ -417,9 +491,10 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         f"use_test={use_test} test_samples={test_samples} "
         f"test_skipped_mixed_cmd_dir_samples="
         f"{getattr(validation_dataset, 'skipped_mixed_cmd_dir_samples', 0) if validation_dataset is not None else 0} "
-        f"balance_cmd_dir_sampling={cmd_dir_sampler is not None} "
-        f"cmd_dir_sampler_info={cmd_dir_sampler_info} "
-        f"freeze_encoder={bool(training.get('freeze_encoder', True))} "
+        f"cmd_dir_loss_weighting={cmd_dir_loss_weights is not None} "
+        f"cmd_dir_loss_weight_info={cmd_dir_loss_weight_info} "
+        f"freeze_layers={frozen_layer_names} "
+        f"frozen_parameters={frozen_parameter_count(model)} "
         f"trainable_parameters={sum(p.numel() for p in trainable_parameters)}"
     )
     trainer.fit(train_loader, validation_loader, start_epoch, int(training["epochs"]))
