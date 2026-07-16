@@ -6,7 +6,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Normalize
 
-from vnm_ros.training.checkpoint import save_checkpoint
+from vnm_ros.training.checkpoint import save_checkpoint, training_checkpoint_filename
 from vnm_ros.training.losses import compute_losses
 from vnm_ros.training.metrics import batch_metrics
 
@@ -207,9 +207,6 @@ class Trainer:
 
     def fit(self, train_loader, validation_loader, start_epoch: int, epochs: int):
         history_path = os.path.join(self.run_dir, "metrics.jsonl")
-        for filename in os.listdir(self.weights_dir):
-            if filename.startswith("epoch_") and filename.endswith(".pth"):
-                os.remove(os.path.join(self.weights_dir, filename))
         try:
             for epoch in range(start_epoch, epochs):
                 learning_rate = self.optimizer.param_groups[0]["lr"]
@@ -258,6 +255,8 @@ class Trainer:
                     best_validation_loss=self.best_validation_loss,
                     config=self.config,
                 )
+                epoch_filename = training_checkpoint_filename(self.config, epoch)
+                save_checkpoint(os.path.join(self.weights_dir, epoch_filename), **common)
                 save_checkpoint(os.path.join(self.weights_dir, "latest.pth"), **common)
                 if is_best:
                     save_checkpoint(os.path.join(self.weights_dir, "best.pth"), **common)

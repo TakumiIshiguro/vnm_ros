@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Normalize
 
-from vnm_ros.training.checkpoint import save_checkpoint
+from vnm_ros.training.checkpoint import save_checkpoint, training_checkpoint_filename
 from vnm_ros.training.trainer import CMD_DIR_NAMES, cmd_dir_labels
 
 
@@ -198,6 +198,8 @@ class NoMaDTrainer:
                 best_validation_loss=self.best_validation_loss,
                 config=self.config,
             )
+            epoch_filename = training_checkpoint_filename(self.config, epoch)
+            save_checkpoint(os.path.join(self.weights_dir, epoch_filename), **common)
             save_checkpoint(os.path.join(self.weights_dir, "latest.pth"), **common)
             if is_best:
                 save_checkpoint(os.path.join(self.weights_dir, "best.pth"), **common)

@@ -181,12 +181,14 @@ rosrun vnm_ros train.py \
 
 When test evaluation is disabled, `best.pth` is selected using the training loss.
 
-Checkpoints are written directly to `weights/` so the navigation launch files can
-use them immediately:
+Checkpoints are written under `weights/<model_type>/`. Every epoch is saved with
+the training parameters in the filename, while `latest.pth` and `best.pth` are
+also updated so the navigation launch files can use them immediately:
 
 ```text
-weights/latest.pth
-weights/best.pth
+weights/nomad/nomad_lr0p0001_bs64_ep10_schedwarmup_cosine_warm4_alpha0p0_wd0p0001_cmdw0_cmdwp1p0_distfreeze1_freezenone_epoch000.pth
+weights/nomad/latest.pth
+weights/nomad/best.pth
 ```
 
 Metrics and TensorBoard logs are written to:

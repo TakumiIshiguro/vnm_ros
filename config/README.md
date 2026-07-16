@@ -314,6 +314,10 @@ rosrun vnm_ros train.py --config-dir $(rospack find vnm_ros)/config --list-freez
 `train/direction/<straight|left|right>/...` と
 `test/direction/<straight|left|right>/...` の方向別lossも記録します。
 学習結果はアーキテクチャごとに `runs/<model_type>/<run_name>/` と
-`weights/<model_type>/` へ保存されます。例えばViNTは `weights/vint/best.pth`、
-NoMaDは `weights/nomad/best.pth` がbest checkpointです。
+`weights/<model_type>/` へ保存されます。各epochのcheckpointは
+`model_type`、`learning_rate`、`batch_size`、`epochs`、`scheduler`、
+`warmup_epochs`、`alpha`、`weight_decay`、`cmd_dir_loss_weighting`、
+`freeze_dist_pred_net`、`freeze_layers` とepoch番号を含むファイル名で保存します。
+互換性のため `latest.pth` と `best.pth` も更新します。例えばViNTは
+`weights/vint/best.pth`、NoMaDは `weights/nomad/best.pth` がbest checkpointです。
 学習再開時は `resume` が優先され、`pretrained_weights_path` は読み込みません。
