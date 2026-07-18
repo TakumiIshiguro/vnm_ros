@@ -2,6 +2,7 @@
 import math
 import os
 import pickle
+import shutil
 import sys
 from datetime import datetime
 
@@ -13,6 +14,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Odometry, Path
 from scenario_navigation_msgs.msg import cmd_dir_intersection
 from sensor_msgs.msg import Image
+from std_srvs.srv import SetBool, SetBoolResponse
 
 from vnm_ros.datasets.cmd_dir_utils import CmdDirHoldFilter
 from vnm_ros.utils.config import load_runtime_config, model_dataset_dir, package_root
@@ -136,19 +138,9 @@ class NavRecoveryDatasetCollector:
         )
         if self.vint_resume_distance > self.recovery_start_distance:
             raise ValueError("vint_resume_distance must be <= recovery_start_distance")
-        self.angular_recovery_enabled = bool(
-            self.collection_cfg.get("angular_recovery_enabled", True)
+        self.angular_recovery_error = float(
+            self.collection_cfg.get("angular_recovery_error", 0.4)
         )
-        self.angular_recovery_start_error = float(
-            self.collection_cfg.get("angular_recovery_start_error", 0.4)
-        )
-        self.angular_recovery_resume_error = float(
-            self.collection_cfg.get("angular_recovery_resume_error", 0.1)
-        )
-        if self.angular_recovery_resume_error > self.angular_recovery_start_error:
-            raise ValueError(
-                "angular_recovery_resume_error must be <= angular_recovery_start_error"
-            )
 
         self.nav_path_topic = self.collection_cfg.get(
             "nav_path_topic", "/move_base/NavfnROS/plan"
@@ -157,20 +149,6 @@ class NavRecoveryDatasetCollector:
         self.vint_cmd_vel_topic = self.collection_cfg.get(
             "vint_cmd_vel_topic", self.topics.get("cmd_vel_debug_topic", "/vnm/cmd_vel_debug")
         )
-        self.publish_zero_when_idle = bool(
-            self.collection_cfg.get("publish_zero_when_idle", True)
-        )
-        self.split_trajectory_on_mode_switch = bool(
-            self.collection_cfg.get("split_trajectory_on_mode_switch", False)
-        )
-        self.split_trajectory_on_save_gap = bool(
-            self.collection_cfg.get("split_trajectory_on_save_gap", True)
-        )
-        self.trajectory_save_gap_factor = float(
-            self.collection_cfg.get("trajectory_save_gap_factor", 2.5)
-        )
-        if self.trajectory_save_gap_factor <= 1.0:
-            raise ValueError("trajectory_save_gap_factor must be > 1.0")
         (
             self.min_trajectory_samples,
             self.required_trajectory_samples,
@@ -196,11 +174,11 @@ class NavRecoveryDatasetCollector:
         self.nav_cmd_vel = None
         self.mode = "vint"
         self.inputs_ready = False
+        self.stop_requested = False
         self.segment_index = 0
         self.name = None
         self.trajectory_dir = None
         self.last_saved = float("-inf")
-        self.trajectory_switch_pending = False
         self.cmd_dir_filter = CmdDirHoldFilter(self.cmd_dir_hold_samples_after_change)
 
         self.positions = []
@@ -213,6 +191,7 @@ class NavRecoveryDatasetCollector:
         rospy.Subscriber(self.nav_path_topic, Path, self.path_callback, queue_size=1)
         rospy.Subscriber(self.vint_cmd_vel_topic, Twist, self.vint_cmd_vel_callback, queue_size=1)
         rospy.Subscriber(self.nav_cmd_vel_topic, Twist, self.nav_cmd_vel_callback, queue_size=1)
+        self.loop_count_srv = rospy.Service("/loop_count", SetBool, self.loop_count_callback)
         self.cmd_vel_pub = rospy.Publisher(self.output_cmd_vel_topic, Twist, queue_size=1)
         rospy.on_shutdown(self.finalize)
 
@@ -223,19 +202,13 @@ class NavRecoveryDatasetCollector:
             f"nav_cmd={self.nav_cmd_vel_topic} output={self.output_cmd_vel_topic} "
             f"recovery_start_distance={self.recovery_start_distance:.3f} "
             f"vint_resume_distance={self.vint_resume_distance:.3f} "
-            f"angular_recovery_enabled={self.angular_recovery_enabled} "
-            f"angular_recovery_start_error={self.angular_recovery_start_error:.3f} "
-            f"angular_recovery_resume_error={self.angular_recovery_resume_error:.3f} "
+            f"angular_recovery_error={self.angular_recovery_error:.3f} "
             f"min_trajectory_samples={self.min_trajectory_samples} "
             f"required_trajectory_samples={self.required_trajectory_samples} "
             f"min_trajectory_samples_source={self.min_trajectory_samples_source} "
             f"cmd_dir_hold_samples_after_change={self.cmd_dir_hold_samples_after_change} "
             f"required_cmd_dir_hold_samples={self.required_cmd_dir_hold_samples} "
             f"cmd_dir_hold_samples_source={self.cmd_dir_hold_samples_source} "
-            f"split_trajectory_on_mode_switch={self.split_trajectory_on_mode_switch} "
-            f"split_trajectory_on_save_gap={self.split_trajectory_on_save_gap} "
-            f"trajectory_save_gap_factor={self.trajectory_save_gap_factor:.3f} "
-            f"publish_zero_when_idle={self.publish_zero_when_idle}"
             f" saved_image_size={self.image_size} center_crop={self.center_crop}"
         )
 
@@ -259,6 +232,13 @@ class NavRecoveryDatasetCollector:
 
     def nav_cmd_vel_callback(self, msg):
         self.nav_cmd_vel = msg
+
+    def loop_count_callback(self, req):
+        if req.data:
+            self.stop_requested = True
+            self.publish_cmd_vel(None)
+            info("loop_count reached; stopping dataset collection")
+        return SetBoolResponse(success=True, message=f"stop_requested={self.stop_requested}")
 
     def update_path_distance(self):
         if self.current_position is None or self.current_path is None:
@@ -292,24 +272,31 @@ class NavRecoveryDatasetCollector:
             and self.path_distance >= self.recovery_start_distance
         )
         angular_requires_nav = (
-            self.angular_recovery_enabled
-            and angular_error is not None
-            and angular_error >= self.angular_recovery_start_error
+            angular_error is not None
+            and angular_error >= self.angular_recovery_error
         )
         distance_allows_vint = (
             self.path_distance is not None
             and self.path_distance <= self.vint_resume_distance
         )
         angular_allows_vint = (
-            not self.angular_recovery_enabled
-            or angular_error is None
-            or angular_error <= self.angular_recovery_resume_error
+            angular_error is None
+            or angular_error < self.angular_recovery_error
         )
 
         if self.mode == "vint" and (distance_requires_nav or angular_requires_nav):
+            if self.trajectory_dir is not None:
+                reasons = []
+                if distance_requires_nav:
+                    reasons.append(f"path_distance={self.path_distance:.3f}")
+                if angular_requires_nav:
+                    reasons.append(f"angular_error={angular_error:.3f}")
+                self.discard_trajectory(
+                    f"recovery_start with active non-recovery trajectory "
+                    f"{' '.join(reasons)}"
+                )
             self.mode = "nav"
-            if self.trajectory_dir is None:
-                self.start_trajectory()
+            self.start_trajectory()
             reasons = []
             if distance_requires_nav:
                 reasons.append(f"path_distance={self.path_distance:.3f}")
@@ -317,16 +304,11 @@ class NavRecoveryDatasetCollector:
                 reasons.append(f"angular_error={angular_error:.3f}")
             info(f"mode=nav {' '.join(reasons)}")
         elif self.mode == "nav" and distance_allows_vint and angular_allows_vint:
+            self.finish_recovery_trajectory(
+                f"recovered path_distance={self.path_distance:.3f}"
+            )
             self.mode = "vint"
-            if self.split_trajectory_on_mode_switch:
-                self.handle_mode_switch_to_vint()
-            angular_text = (
-                "none" if angular_error is None else f"{angular_error:.3f}"
-            )
-            info(
-                f"mode=vint path_distance={self.path_distance:.3f} "
-                f"angular_error={angular_text}"
-            )
+            info(f"mode=vint path_distance={self.path_distance:.3f}")
 
     def selected_cmd_vel(self):
         self.update_mode()
@@ -360,13 +342,7 @@ class NavRecoveryDatasetCollector:
         )
 
     def should_save_sample(self):
-        if self.mode == "nav":
-            return True
-        if self.trajectory_dir is None:
-            return False
-        if self.path_distance is None:
-            return False
-        return self.path_distance <= self.recovery_start_distance
+        return self.mode == "nav"
 
     def save_sample(self):
         if not self.should_save_sample():
@@ -374,15 +350,6 @@ class NavRecoveryDatasetCollector:
         if not self.ready_to_save():
             return
         if self.trajectory_dir is None:
-            self.start_trajectory()
-        elif self.should_split_on_save_gap():
-            gap = self.latest_image_time - self.last_saved
-            info(
-                f"trajectory save gap detected {self.name}: "
-                f"gap={gap:.3f}s threshold="
-                f"{self.sample_dt * self.trajectory_save_gap_factor:.3f}s"
-            )
-            self.finalize()
             self.start_trajectory()
         if self.latest_image_time - self.last_saved < self.sample_dt:
             return
@@ -404,30 +371,22 @@ class NavRecoveryDatasetCollector:
             f"saved sample {index} mode={self.mode} "
             f"path_distance={path_distance} angular_error={angular_error}"
         )
-        self.finalize_if_switch_ready()
-
-    def should_split_on_save_gap(self):
-        if not self.split_trajectory_on_save_gap:
-            return False
-        if not self.positions:
-            return False
-        if self.latest_image_time is None or self.last_saved == float("-inf"):
-            return False
-        return (
-            self.latest_image_time - self.last_saved
-            > self.sample_dt * self.trajectory_save_gap_factor
-        )
 
     def publish_cmd_vel(self, msg):
         if msg is not None:
             self.cmd_vel_pub.publish(msg)
             return
-        if self.publish_zero_when_idle:
-            self.cmd_vel_pub.publish(Twist())
+        self.cmd_vel_pub.publish(Twist())
 
     def spin(self):
         rate = rospy.Rate(float(self.collection_cfg.get("control_rate", 10.0)))
         while not rospy.is_shutdown():
+            if self.stop_requested:
+                self.publish_cmd_vel(None)
+                self.finalize()
+                rospy.signal_shutdown("loop_count reached")
+                break
+
             missing_inputs = self.missing_inputs()
             if missing_inputs:
                 self.inputs_ready = False
@@ -484,36 +443,26 @@ class NavRecoveryDatasetCollector:
         info(f"saved online trajectory {self.name}: {len(self.positions)} samples")
         self.reset_trajectory()
 
-    def request_trajectory_switch(self):
+    def discard_trajectory(self, reason):
         if self.trajectory_dir is None:
             return
-        self.trajectory_switch_pending = True
-        info(
-            f"trajectory switch pending {self.name}: "
-            f"{len(self.positions)}/{self.min_trajectory_samples} samples"
-        )
+        trajectory_dir = self.trajectory_dir
+        name = self.name
+        count = len(self.positions)
+        self.reset_trajectory()
+        shutil.rmtree(trajectory_dir, ignore_errors=True)
+        info(f"discarded trajectory {name}: {count} samples reason={reason}")
 
-    def handle_mode_switch_to_vint(self):
+    def finish_recovery_trajectory(self, reason):
         if self.trajectory_dir is None:
-            return
-        if len(self.positions) >= self.min_trajectory_samples:
-            info(
-                f"trajectory switch ready {self.name}: "
-                f"{len(self.positions)}/{self.min_trajectory_samples} samples"
-            )
-            self.finalize()
-            return
-        self.request_trajectory_switch()
-
-    def finalize_if_switch_ready(self):
-        if not self.trajectory_switch_pending:
             return
         if len(self.positions) < self.min_trajectory_samples:
+            self.discard_trajectory(
+                f"{reason} samples={len(self.positions)}/{self.min_trajectory_samples}"
+            )
             return
-        was_nav = self.mode == "nav"
+        info(f"finished recovery trajectory {self.name}: {reason}")
         self.finalize()
-        if was_nav:
-            self.start_trajectory()
 
     def start_trajectory(self):
         if self.trajectory_dir is not None:
@@ -529,7 +478,6 @@ class NavRecoveryDatasetCollector:
             raise FileExistsError(self.trajectory_dir)
         os.makedirs(self.trajectory_dir)
         self.last_saved = float("-inf")
-        self.trajectory_switch_pending = False
         info(f"started trajectory {self.name}: {self.trajectory_dir}")
 
     def reset_trajectory(self):
@@ -539,7 +487,6 @@ class NavRecoveryDatasetCollector:
         self.yaws = []
         self.cmd_dirs = []
         self.last_saved = float("-inf")
-        self.trajectory_switch_pending = False
         self.cmd_dir_filter.reset()
 
 

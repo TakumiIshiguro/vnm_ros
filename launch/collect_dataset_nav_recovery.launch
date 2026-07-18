@@ -1,6 +1,33 @@
 <launch>
+  <arg name="config_dir" default="$(find vnm_ros)/config"/>
+  <arg name="start_orne_navigation" default="true"/>
+  <arg name="start_vnm_navigation" default="true"/>
+
+  <arg name="map_file" default="$(find orne_navigation_executor)/config/maps/cit_3f_map"/>
+  <arg name="costmap_file" default="$(find orne_navigation_executor)/config/maps/cit_3f_map_for_costmap"/>
+  <arg name="waypoints_file" default="$(find orne_navigation_executor)/config/waypoints_cfg/route_a-f.yaml"/>
+  <arg name="initial_pose_x" default="-5"/>
+  <arg name="initial_pose_y" default="7.7"/>
+  <arg name="initial_pose_a" default="3.14"/>
+
+  <group if="$(arg start_orne_navigation)">
+    <include file="$(find orne_navigation_executor)/launch/play_waypoints_nav_common.launch">
+      <arg name="map_file" value="$(arg map_file)"/>
+      <arg name="costmap_file" value="$(arg costmap_file)"/>
+      <arg name="waypoints_file" value="$(arg waypoints_file)"/>
+      <arg name="target_loop_count" value="1"/>
+      <arg name="initial_pose_x" value="$(arg initial_pose_x)"/>
+      <arg name="initial_pose_y" value="$(arg initial_pose_y)"/>
+      <arg name="initial_pose_a" value="$(arg initial_pose_a)"/>
+    </include>
+  </group>
+
+  <group if="$(arg start_vnm_navigation)">
+    <include file="$(find vnm_ros)/launch/navigate_visualization.launch"/>
+  </group>
+
   <node pkg="vnm_ros" type="collect_dataset_nav_recovery.py"
         name="vnm_collect_dataset_nav_recovery" output="screen">
-    <param name="config_dir" value="$(find vnm_ros)/config"/>
+    <param name="config_dir" value="$(arg config_dir)"/>
   </node>
 </launch>
