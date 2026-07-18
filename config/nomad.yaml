@@ -5,8 +5,8 @@ paths:
   rosbag:
     path: "/home/takumi/bags/sim_0.2.bag"
   dataset:
-    # train_data_dir: dataset/my_dataset/train
-    train_data_dir: dataset/0.2_3hz/
+    train_data_dir: dataset/mix/
+    # train_data_dir: dataset/0.2_3hz/
 
     # test_data_dir: dataset/nav/
 
@@ -21,7 +21,7 @@ model:
   context_type: temporal
   normalize: false
   waypoint_index: 2
-  checkpoint_path: weights/nomad/best.pth
+  checkpoint_path: weights/nomad/epoch010.pth
   # checkpoint_path: weights/nomad.pth
   encoding_size: 256
   context_size: 3
@@ -38,6 +38,7 @@ model:
   num_action_samples: 8
   action_noise_scale: 1.0
   action_sample_strategy: mean
+  # action_sample_strategy: first
   cmd_dir_theta_threshold_deg: 15.0
   action_stats:
     min: [-2.5, -4.0]
@@ -51,21 +52,13 @@ collection:
   dataset_type: train
   trajectory_name: ""
   pose_source: amcl
-  sample_dt: 0.5
+  sample_dt: 0.25
   image_format: jpg
   control_rate: 10.0
   nav_path_topic: /move_base/NavfnROS/plan
-  nav_cmd_vel_topic: /nav_vel
-  vint_cmd_vel_topic: /vnm/cmd_vel_debug
-  publish_zero_when_idle: true
-  recovery_start_distance: 0.15
-  vint_resume_distance: 0.1
-  angular_recovery_enabled: true
-  angular_recovery_start_error: 0.4
-  angular_recovery_resume_error: 0.05
-  split_trajectory_on_mode_switch: false
-  split_trajectory_on_save_gap: true
-  trajectory_save_gap_factor: 1.1
+  recovery_start_distance: 0.1
+  vint_resume_distance: 0.05
+  angular_recovery_error: 0.8
   min_trajectory_samples: auto
 
 training:
@@ -81,6 +74,7 @@ training:
   use_test: false
   tensorboard: true
   epochs: 10
+  epoch_sweep: [5, 10, 15, 20]
   batch_size: 64
   num_workers: 4
   learning_rate: 0.0001

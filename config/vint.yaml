@@ -50,17 +50,9 @@ collection:
   image_format: jpg
   control_rate: 10.0
   nav_path_topic: /move_base/NavfnROS/plan
-  nav_cmd_vel_topic: /nav_vel
-  vint_cmd_vel_topic: /vnm/cmd_vel_debug
-  publish_zero_when_idle: true
   recovery_start_distance: 0.15
   vint_resume_distance: 0.1
-  angular_recovery_enabled: true
-  angular_recovery_start_error: 0.4
-  angular_recovery_resume_error: 0.05
-  split_trajectory_on_mode_switch: false
-  split_trajectory_on_save_gap: true
-  trajectory_save_gap_factor: 1.1
+  angular_recovery_error: 0.4
   min_trajectory_samples: auto
 
 training:
@@ -69,6 +61,7 @@ training:
   use_test: false
   tensorboard: true
   epochs: 100
+  epoch_sweep: []
   batch_size: 64
   num_workers: 4
   learning_rate: 0.0001
