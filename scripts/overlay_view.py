@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import math
 import os
 import sys
 
@@ -140,6 +141,32 @@ def image_point(waypoint, image_size, scale, origin):
     )
 
 
+def draw_dashed_line(draw, start, end, fill, width, dash_length=12, gap_length=8):
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    length = math.hypot(dx, dy)
+    if length < 1.0:
+        return
+
+    step = dash_length + gap_length
+    distance = 0.0
+    while distance < length:
+        segment_end = min(distance + dash_length, length)
+        ratio_start = distance / length
+        ratio_end = segment_end / length
+        draw.line(
+            (
+                start[0] + dx * ratio_start,
+                start[1] + dy * ratio_start,
+                start[0] + dx * ratio_end,
+                start[1] + dy * ratio_end,
+            ),
+            fill=fill,
+            width=width,
+        )
+        distance += step
+
+
 def draw_action_candidates(draw: ImageDraw.ImageDraw, image_size, candidates, waypoint):
     if candidates is None:
         return
@@ -161,6 +188,15 @@ def draw_action_candidates(draw: ImageDraw.ImageDraw, image_size, candidates, wa
 
     def point(waypoint):
         return image_point(waypoint, image_size, scale, origin)
+
+    forward_extent = max(
+        max(float(waypoint[0]), 0.0)
+        for sample in actions
+        for waypoint in sample
+    )
+    baseline_end = point((max(forward_extent, max_extent * 0.25), 0.0))
+    draw_dashed_line(draw, origin, baseline_end, fill=(0, 0, 0), width=5)
+    draw_dashed_line(draw, origin, baseline_end, fill=(255, 255, 255), width=2)
 
     draw.ellipse(
         (origin[0] - 5, origin[1] - 5, origin[0] + 5, origin[1] + 5),
