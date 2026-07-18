@@ -6,9 +6,9 @@
 ## vint.yaml / nomad.yaml
 
 モデルごとの構造、重み、Dataset作成、学習設定をまとめます。
-どちらを使うかは `runtime.yaml` の `model_type` で選びます。
-`model_type: vint` なら `vint.yaml`、`model_type: nomad` なら
-`nomad.yaml` を読み込みます。
+どれを使うかは `runtime.yaml` の `model_type` で選びます。
+`model_type: gnm` なら `gnm.yaml`、`model_type: vint` なら `vint.yaml`、
+`model_type: nomad` なら `nomad.yaml` を読み込みます。
 
 ### top level
 
@@ -31,7 +31,7 @@
 
 | パラメータ | 意味 |
 | --- | --- |
-| `model_type` | この設定ファイルのモデル形式です。`vint.yaml` は `vint`、`nomad.yaml` は `nomad` です。 |
+| `model_type` | この設定ファイルのモデル形式です。`gnm.yaml` は `gnm`、`vint.yaml` は `vint`、`nomad.yaml` は `nomad` です。 |
 | `device` | 推論デバイスです。`auto` はCUDAが利用可能ならGPU、それ以外はCPUを使用します。 |
 | `obs_encoder` | 画像エンコーダです。 |
 | `mha_num_attention_heads` | TransformerのMulti-Head Attentionのヘッド数です。 |
@@ -41,6 +41,28 @@
 | `normalize` | `true` の場合、モデル出力WaypointのXYを実機用の距離へスケーリングします。 |
 | `waypoint_index` | 予測されたWaypoint列のうち、制御に使用する番号です。0始まりです。 |
 | `checkpoint_path` | 推論で読み込むモデル重みのパスです。 |
+
+### gnm.yaml の model
+
+GNM専用、またはGNM checkpointに合わせる設定です。公式GNM large checkpointは
+`weights/gnm.pth` に置きます。GNMはViNTと同じく距離とWaypoint列を出力するため、
+topomap navigationで使用できます。`direction_conditioning: true` の場合は、
+goal画像encodingの代わりに `cmd_dir` から作った方向encodingを入力し、
+goal画像なしのexploreで使用します。この方向encoderはGNM checkpointには含まれないため、
+checkpoint読み込み時はGNM本体だけを事前学習済み重みから初期化し、方向encoderは新規初期化されます。
+
+| パラメータ | 意味 |
+| --- | --- |
+| `obs_encoding_size` | GNMの観測画像特徴ベクトルの次元数です。公式GNM largeは `1024` です。 |
+| `goal_encoding_size` | GNMの目標画像特徴ベクトルの次元数です。公式GNM largeは `1024` です。 |
+| `context_size` | 現在画像より前に使う画像枚数です。公式GNM largeは `5` です。 |
+| `image_size` | モデル入力画像の `[幅, 高さ]` です。公式設定は `[85, 64]` です。 |
+| `len_traj_pred` | モデルが予測する将来Waypoint数です。公式GNM largeは `5` です。 |
+| `learn_angle` | `true` の場合、WaypointのXYに加えて向きのcos/sinも出力します。 |
+| `direction_conditioning` | `true` の場合、goal画像ではなく `cmd_dir` 方向encodingを入力します。 |
+| `direction_num_commands` | 方向コマンド数です。通常はstraight/left/rightの3です。 |
+| `direction_latent_dim` | コマンドごとの学習可能latent `z_i` の次元数です。 |
+| `direction_hidden_dim` | `z_i` から方向encodingを作るMLPの隠れ層次元数です。 |
 
 ### vint.yaml の model
 
@@ -154,7 +176,7 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 
 ## dataset / collection / training
 
-`vint.yaml` と `nomad.yaml` は、それぞれモデルに対応した
+`gnm.yaml`、`vint.yaml`、`nomad.yaml` は、それぞれモデルに対応した
 `dataset`、`collection`、`training` を持ちます。`runtime.yaml` の
 `model_type` で選ばれたファイルの設定だけが使われます。
 
@@ -204,17 +226,9 @@ distance labelは予測する行動系列の終端までのtemporal distanceと�
 | `image_format` | 保存画像の拡張子です。例: `jpg`、`png`。 |
 | `control_rate` | nav recovery収集時にcmd_velをpublishする周期 `[Hz]` です。 |
 | `nav_path_topic` | 経路からの距離判定に使うnav stackのPath topicです。 |
-| `nav_cmd_vel_topic` | 経路復帰時に使うnav stackのcmd_vel topicです。 |
-| `vint_cmd_vel_topic` | 通常走行時に使うVNM/NoMaDのdebug cmd_vel topicです。通常は `/vnm/cmd_vel_debug` です。 |
-| `publish_zero_when_idle` | 入力cmd_velが未到着のときにzero twistをpublishするかを指定します。 |
 | `recovery_start_distance` | 経路からこの距離以上離れたらnav recoveryへ切り替えます `[m]`。 |
 | `vint_resume_distance` | 経路へこの距離以内に戻ったらVNM/NoMaD走行へ戻します `[m]`。 |
-| `angular_recovery_enabled` | `true` の場合、navとVNM/NoMaDの角速度差でもnav recoveryへ切り替えます。 |
-| `angular_recovery_start_error` | `abs(nav.angular.z - vnm.angular.z)` がこの値以上ならnav recoveryへ切り替えます `[rad/s]`。 |
-| `angular_recovery_resume_error` | 角速度差がこの値以下、かつ経路距離が `vint_resume_distance` 以下ならVNM/NoMaD走行へ戻します `[rad/s]`。 |
-| `split_trajectory_on_mode_switch` | `true` の場合、nav recoveryからVNM/NoMaD走行へ戻った時点でtrajectoryを切り替えます。通常は `false` にして、連続走行を長いtrajectoryとして保存し、学習サンプル数を増やします。 |
-| `split_trajectory_on_save_gap` | `true` の場合、保存できない期間が一定以上続いたあと次に保存するタイミングでtrajectoryを切り替えます。 |
-| `trajectory_save_gap_factor` | `split_trajectory_on_save_gap` の閾値です。`sample_dt * trajectory_save_gap_factor` より保存間隔が空いたらtrajectoryを切り替えます。 |
+| `angular_recovery_error` | `abs(nav.angular.z - vnm.angular.z)` がこの値以上ならnav recoveryへ切り替えます `[rad/s]`。 |
 | `min_trajectory_samples` | trajectoryを保存・切替する最小サンプル数です。`auto` の場合、選択中モデルの `(context_size + len_traj_pred) * waypoint_spacing + 1` から自動計算します。手動値が必要値より小さい場合も必要値まで引き上げます。 |
 
 保存画像は生画像ではなく、現在選択中モデルの `image_size` に合わせて
@@ -244,9 +258,15 @@ roslaunch vnm_ros collect_dataset_nav_recovery.launch
 ```
 
 この収集スクリプトは通常時に `/vnm/cmd_vel_debug`、復帰時に `/nav_vel` を
-選んで `/cmd_vel` へpublishします。復帰への切替は経路からの距離、または
-navとVNM/NoMaDの角速度差で判定できます。重複publishを避けるため、収集中は
-VNM本体の直接 `/cmd_vel` publishを止め、debug topicだけを使う構成にしてください。
+選んで `/cmd_vel` へpublishします。nav recoveryへの切替は、経路からの距離、または
+navとVNM/NoMaDの角速度差で判定します。`recovery_start_distance` 以上、または
+`abs(nav.angular.z - vnm.angular.z) >= angular_recovery_error` でnav recoveryへ入り、
+`vint_resume_distance` 以下かつ角速度差が `angular_recovery_error` 未満になったら
+VNM/NoMaD走行へ戻ります。Datasetとして保存するのはnav recovery中の区間だけです。
+VNM/NoMaD走行中の区間は保存せず、nav recoveryが終わった時点でそのrecovery trajectoryを
+保存して閉じます。`min_trajectory_samples` 未満の短すぎるrecoveryは学習サンプルを
+作れないため破棄します。重複publishを避けるため、収集中はVNM本体の直接 `/cmd_vel`
+publishを止め、debug topicだけを使う構成にしてください。
 
 収集後の `traj_data.pkl` はCSVへ変換できます。
 
@@ -283,6 +303,7 @@ context画像列と教師軌跡も保存します。
 | `use_test` | `true` の場合、各epochでtest Datasetを評価します。 |
 | `tensorboard` | TensorBoardログを保存するかを指定します。 |
 | `epochs` | 学習する総epoch数です。 |
+| `epoch_sweep` | 複数の総epoch数を比較するためのリストです。例: `[5, 10, 20]` なら、それぞれ同じ初期重み・同じseedから独立に学習し直します。空リストなら `epochs` で1回だけ学習します。`resume` とは併用できません。 |
 | `batch_size` | 1回の更新で使用するサンプル数です。 |
 | `num_workers` | PyTorch DataLoaderの並列読込プロセス数です。 |
 | `learning_rate` | AdamW Optimizerの初期学習率です。 |
@@ -314,10 +335,10 @@ rosrun vnm_ros train.py --config-dir $(rospack find vnm_ros)/config --list-freez
 `train/direction/<straight|left|right>/...` と
 `test/direction/<straight|left|right>/...` の方向別lossも記録します。
 学習結果はアーキテクチャごとに `runs/<model_type>/<run_name>/` と
-`weights/<model_type>/` へ保存されます。各epochのcheckpointは
-`model_type`、`learning_rate`、`batch_size`、`epochs`、`scheduler`、
-`warmup_epochs`、`alpha`、`weight_decay`、`cmd_dir_loss_weighting`、
-`freeze_dist_pred_net`、`freeze_layers` とepoch番号を含むファイル名で保存します。
-互換性のため `latest.pth` と `best.pth` も更新します。例えばViNTは
-`weights/vint/best.pth`、NoMaDは `weights/nomad/best.pth` がbest checkpointです。
+`weights/<model_type>/` へ保存されます。checkpointは各epochで
+`latest.pth` を更新し、監視lossが改善した場合だけ `best.pth` も更新します。
+`epoch_sweep` を指定した場合は、各epoch数ごとに独立したrunを作り、その最終epochの
+checkpointも `epochXXX.pth` として保存します。
+例えばViNTは `weights/vint/best.pth`、NoMaDは `weights/nomad/best.pth` が
+best checkpointです。
 学習再開時は `resume` が優先され、`pretrained_weights_path` は読み込みません。
