@@ -34,7 +34,7 @@ class VNMModel:
         return self.inference.scale_waypoint(waypoint, max_v, model_rate)
 
     def _build_inference(self):
-        if self.model_type == "vint":
+        if self.model_type in ("gnm", "vint"):
             return ViNTInference(self.model, self.config, self.device)
         if self.model_type == "nomad":
             return NoMaDInference(self.model, self.config, self.device)

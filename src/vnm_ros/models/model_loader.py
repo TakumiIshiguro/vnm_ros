@@ -1,5 +1,6 @@
 from typing import Callable, Dict
 
+from vnm_ros.models.gnm_model import GNM
 from vnm_ros.models.nomad_model import (
     DenseNetwork,
     DirectionEncoder,
@@ -118,7 +119,27 @@ def _build_nomad(config: Dict):
     )
 
 
+def _build_gnm(config: Dict):
+    direction_encoder = None
+    if bool(config.get("direction_conditioning", False)):
+        direction_encoder = DirectionEncoder(
+            embedding_dim=int(config.get("goal_encoding_size", 1024)),
+            input_dim=int(config.get("direction_num_commands", 3)),
+            hidden_dim=int(config.get("direction_hidden_dim", 64)),
+            latent_dim=int(config.get("direction_latent_dim", 64)),
+        )
+    return GNM(
+        context_size=int(config["context_size"]),
+        len_traj_pred=int(config["len_traj_pred"]),
+        learn_angle=bool(config["learn_angle"]),
+        obs_encoding_size=int(config.get("obs_encoding_size", 1024)),
+        goal_encoding_size=int(config.get("goal_encoding_size", 1024)),
+        direction_encoder=direction_encoder,
+    )
+
+
 register_model("vint", _build_vint)
+register_model("gnm", _build_gnm)
 register_model("nomad", _build_nomad)
 
 
