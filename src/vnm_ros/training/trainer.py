@@ -6,7 +6,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Normalize
 
-from vnm_ros.training.checkpoint import save_checkpoint, training_checkpoint_filename
+from vnm_ros.training.checkpoint import save_checkpoint
 from vnm_ros.training.losses import compute_losses
 from vnm_ros.training.metrics import batch_metrics
 
@@ -110,6 +110,8 @@ class Trainer:
             else None
         )
         self.best_validation_loss = float("inf")
+        training_cfg = config.get("train", {}).get("training", {})
+        self.final_checkpoint_name = training_cfg.get("final_checkpoint_name", "")
         self.normalize = Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225],
@@ -255,11 +257,14 @@ class Trainer:
                     best_validation_loss=self.best_validation_loss,
                     config=self.config,
                 )
-                epoch_filename = training_checkpoint_filename(self.config, epoch)
-                save_checkpoint(os.path.join(self.weights_dir, epoch_filename), **common)
                 save_checkpoint(os.path.join(self.weights_dir, "latest.pth"), **common)
                 if is_best:
                     save_checkpoint(os.path.join(self.weights_dir, "best.pth"), **common)
+                if epoch + 1 == epochs and self.final_checkpoint_name:
+                    save_checkpoint(
+                        os.path.join(self.weights_dir, self.final_checkpoint_name),
+                        **common,
+                    )
         finally:
             if self.writer is not None:
                 self.writer.close()

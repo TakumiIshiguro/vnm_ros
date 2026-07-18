@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import copy
 import math
 import os
 import random
@@ -118,6 +119,50 @@ def training_artifact_dirs(model_cfg, run_name):
     return run_dir, weights_dir
 
 
+def configured_epoch_sweep(training):
+    epoch_sweep = training.get("epoch_sweep", [])
+    if epoch_sweep is None:
+        return []
+    if isinstance(epoch_sweep, int):
+        epoch_sweep = [epoch_sweep]
+
+    epochs = []
+    for epoch_count in epoch_sweep:
+        epoch_count = int(epoch_count)
+        if epoch_count <= 0:
+            raise ValueError("epoch_sweep must contain positive epoch counts")
+        epochs.append(epoch_count)
+    return epochs
+
+
+def train_cfg_for_epoch_count(train_cfg, epoch_count):
+    run_train_cfg = copy.deepcopy(train_cfg)
+    training = run_train_cfg["training"]
+    training["epochs"] = int(epoch_count)
+    training["final_checkpoint_name"] = f"epoch{int(epoch_count):03d}.pth"
+    return run_train_cfg
+
+
+def run_training_jobs(train_fn, args, train_cfg, model_cfg):
+    if args.list_freeze_layers:
+        train_fn(args, train_cfg, dict(model_cfg))
+        return
+
+    training = train_cfg["training"]
+    epoch_sweep = configured_epoch_sweep(training)
+    if not epoch_sweep:
+        train_fn(args, train_cfg, dict(model_cfg))
+        return
+
+    if training.get("resume", ""):
+        raise ValueError("epoch_sweep cannot be used with resume")
+
+    for epoch_count in epoch_sweep:
+        run_train_cfg = train_cfg_for_epoch_count(train_cfg, epoch_count)
+        print(f"starting epoch_sweep run epochs={epoch_count}")
+        train_fn(args, run_train_cfg, dict(model_cfg))
+
+
 def freeze_named_layers(model, layer_names):
     if not layer_names:
         return [], []
@@ -227,7 +272,7 @@ def main():
     model_cfg = dict(cfg["model"])
     if model_cfg["model_type"] == "nomad":
         model_cfg["direction_conditioning"] = True
-        train_nomad_direction(args, train_cfg, model_cfg)
+        run_training_jobs(train_nomad_direction, args, train_cfg, model_cfg)
         return
     model_cfg.update(
         {
@@ -238,7 +283,11 @@ def main():
             "normalize": train_cfg["dataset"]["normalize"],
         }
     )
+    run_training_jobs(train_vint_direction, args, train_cfg, model_cfg)
+    return
 
+
+def train_vint_direction(args, train_cfg, model_cfg):
     seed = int(train_cfg.get("seed", 0))
     random.seed(seed)
     np.random.seed(seed)
@@ -318,7 +367,7 @@ def main():
         if validation_dataset is not None
         else None
     )
-    run_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    run_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_ep{int(training['epochs']):03d}"
     run_dir, weights_dir = training_artifact_dirs(model_cfg, run_name)
     checkpoint_train_cfg = dict(train_cfg)
     checkpoint_train_cfg["run_name"] = run_name
@@ -458,7 +507,7 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         if validation_dataset is not None
         else None
     )
-    run_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    run_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_ep{int(training['epochs']):03d}"
     run_dir, weights_dir = training_artifact_dirs(model_cfg, run_name)
     checkpoint_train_cfg = dict(train_cfg)
     checkpoint_train_cfg["run_name"] = run_name
