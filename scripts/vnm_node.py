@@ -78,6 +78,12 @@ def main():
         )
 
     image_sub = ImageContextSubscriber(topics["image_topic"], model.context_size)
+    rospy.Subscriber(
+        topics.get("reset_context_topic", "/vnm/reset_context"),
+        Bool,
+        lambda msg: image_sub.reset() if msg.data else None,
+        queue_size=1,
+    )
     action_selector = CmdDirActionSelector(
         theta_threshold_deg=float(model_cfg.get("cmd_dir_theta_threshold_deg", 15.0))
     )
@@ -126,6 +132,7 @@ def main():
     waiting_for_cmd_dir_logged = False
 
     while not rospy.is_shutdown():
+        image_sub.sample()
         reached = False
         if subgoal_selector is not None:
             reached = subgoal_selector.reached_goal()
@@ -225,7 +232,7 @@ def main():
                     pil_to_msg(topo.images[subgoal_selector.selected_node])
                 )
 
-            v, w = controller.command(waypoint)
+            v, w = controller.command(waypoint, waypoint_index)
             cmd_debug = Twist()
             cmd_debug.linear.x = v
             cmd_debug.angular.z = w

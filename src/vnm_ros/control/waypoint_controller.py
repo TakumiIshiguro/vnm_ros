@@ -16,24 +16,26 @@ class WaypointController:
         self.dt = dt
         self.safety = SafetyFilter(max_v=max_v, max_w=max_w)
 
-    def command(self, waypoint: Sequence[float]) -> Tuple[float, float]:
+    def command(
+        self, waypoint: Sequence[float], waypoint_index: int = 0
+    ) -> Tuple[float, float]:
         if len(waypoint) < 2:
             return 0.0, 0.0
 
         dx = float(waypoint[0])
         dy = float(waypoint[1])
+        angular_dt = self.dt * (max(int(waypoint_index), 0) + 1)
 
         if len(waypoint) >= 4 and abs(dx) < EPS and abs(dy) < EPS:
             hx = float(waypoint[2])
             hy = float(waypoint[3])
             v = 0.0
-            w = clip_angle(np.arctan2(hy, hx)) / self.dt
+            w = clip_angle(np.arctan2(hy, hx)) / angular_dt
         elif abs(dx) < EPS:
             v = 0.0
-            w = np.sign(dy) * np.pi / (2 * self.dt)
+            w = np.sign(dy) * np.pi / (2 * angular_dt)
         else:
             v = dx / self.dt
-            w = np.arctan(dy / dx) / self.dt
+            w = np.arctan(dy / dx) / angular_dt
 
         return self.safety.clip(v, w)
-
