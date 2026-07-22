@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import os
 import sys
 
@@ -100,6 +101,13 @@ def cmd_dir_index(cmd_dir):
     if np.sum(cmd_dir) <= 0.0:
         return -1
     return int(np.argmax(cmd_dir))
+
+
+def sample_cmd_dir_index(dataset, sample_index):
+    if hasattr(dataset, "sample_cmd_dir_label"):
+        return dataset.sample_cmd_dir_label(sample_index)
+    name, current = dataset.samples[sample_index]
+    return cmd_dir_index(dataset.trajectory(name)["cmd_dir"][current])
 
 
 def color_for_trajectory(index):
@@ -351,9 +359,10 @@ def preview_indices(length, count):
 
 def preview_indices_per_direction(dataset, count_per_direction):
     by_direction = {"straight": [], "left": [], "right": []}
-    for sample_index, (name, current) in enumerate(dataset.samples):
-        trajectory = dataset.trajectory(name)
-        direction = CMD_DIR_NAMES.get(cmd_dir_index(trajectory["cmd_dir"][current]), "none")
+    for sample_index, _ in enumerate(dataset.samples):
+        direction = CMD_DIR_NAMES.get(
+            sample_cmd_dir_index(dataset, sample_index), "none"
+        )
         if direction in by_direction:
             by_direction[direction].append(sample_index)
 
@@ -363,6 +372,62 @@ def preview_indices_per_direction(dataset, count_per_direction):
         local_indices = preview_indices(len(indices), count_per_direction)
         selected.extend((direction, indices[index]) for index in local_indices)
     return selected
+
+
+def sample_teacher_trajectory(dataset, sample_index):
+    name, current = dataset.samples[sample_index]
+    trajectory = dataset.trajectory(name)
+    action_indices = current + np.arange(dataset.len_traj_pred + 1) * dataset.waypoint_spacing
+    positions = trajectory["position"][action_indices]
+    local_positions = to_local_coords(
+        positions,
+        positions[0],
+        float(trajectory["yaw"][current]),
+    )
+    return name, current, trajectory, local_positions
+
+
+def trajectory_direction(angle_deg, threshold_deg):
+    if angle_deg > threshold_deg:
+        return "left"
+    if angle_deg < -threshold_deg:
+        return "right"
+    return "straight"
+
+
+def opposite_direction_records(dataset, threshold_deg):
+    threshold_deg = max(float(threshold_deg), 0.0)
+    records = []
+    for sample_index, (name, current) in enumerate(dataset.samples):
+        target = CMD_DIR_NAMES.get(
+            sample_cmd_dir_index(dataset, sample_index),
+            "none",
+        )
+        if target not in ("left", "right"):
+            continue
+        _, _, _, local_positions = sample_teacher_trajectory(dataset, sample_index)
+        endpoint = local_positions[-1, :2]
+        angle_deg = float(np.degrees(np.arctan2(endpoint[1], endpoint[0])))
+        actual = trajectory_direction(angle_deg, threshold_deg)
+        is_opposite = (
+            (target == "left" and actual == "right")
+            or (target == "right" and actual == "left")
+        )
+        if not is_opposite:
+            continue
+        records.append(
+            {
+                "sample_index": sample_index,
+                "trajectory": name,
+                "current_index": int(current),
+                "target_direction": target,
+                "actual_direction": actual,
+                "endpoint_angle_deg": angle_deg,
+                "endpoint_x_m": float(endpoint[0]),
+                "endpoint_y_m": float(endpoint[1]),
+            }
+        )
+    return records
 
 
 def draw_local_trajectory(
@@ -428,7 +493,9 @@ def make_nomad_dataset(cfg, data_dir, trajectory_names):
         context_size=int(model_cfg["context_size"]),
         len_traj_pred=int(model_cfg["len_traj_pred"]),
         waypoint_spacing=int(dataset_cfg["waypoint_spacing"]),
+        metric_waypoint_spacing=float(dataset_cfg["metric_waypoint_spacing"]),
         action_stats=model_cfg["action_stats"],
+        normalize=bool(model_cfg.get("normalize", True)),
         center_crop=bool(model_cfg.get("image_center_crop", False)),
         trajectory_names=trajectory_names,
     )
@@ -455,10 +522,10 @@ def make_direction_dataset(cfg, data_dir, trajectory_names):
     model_type = cfg["model"]["model_type"]
     if model_type == "nomad":
         return make_nomad_dataset(cfg, data_dir, trajectory_names)
-    if model_type == "vint" and bool(cfg["model"].get("direction_conditioning", False)):
+    if bool(cfg["model"].get("direction_conditioning", False)):
         return make_vint_dataset(cfg, data_dir, trajectory_names)
     raise ValueError(
-        "training sample previews require NoMaD or ViNT with direction_conditioning=true"
+        "training sample previews require NoMaD or direction_conditioning=true"
     )
 
 
@@ -471,20 +538,20 @@ def resize_to_height(image, target_height):
     return image.resize(target_size, Image.Resampling.BILINEAR)
 
 
-def render_training_samples(dataset, output_dir, count_per_direction, preview_image_height):
-    if count_per_direction == 0:
-        return []
-    os.makedirs(output_dir, exist_ok=True)
-    remove_pngs(output_dir)
+def render_sample_preview(
+    dataset,
+    sample_index,
+    preview_id,
+    preview_image_height,
+    output_path,
+    detail_text=None,
+):
     colors = {
         "straight": CMD_DIR_COLORS[0],
         "left": CMD_DIR_COLORS[1],
         "right": CMD_DIR_COLORS[2],
         "none": CMD_DIR_COLORS[-1],
     }
-    written = []
-    selected_samples = preview_indices_per_direction(dataset, count_per_direction)
-    direction_counts = {"straight": 0, "left": 0, "right": 0}
     expected_forward_m = None
     if hasattr(dataset, "metric_waypoint_spacing"):
         expected_forward_m = (
@@ -492,58 +559,73 @@ def render_training_samples(dataset, output_dir, count_per_direction, preview_im
             * int(dataset.waypoint_spacing)
             * int(dataset.len_traj_pred)
         )
+    name, current, trajectory, local_positions = sample_teacher_trajectory(
+        dataset,
+        sample_index,
+    )
+    cmd_name = CMD_DIR_NAMES.get(
+        sample_cmd_dir_index(dataset, sample_index), "none"
+    )
+    context_indices = current + np.arange(-dataset.context_size, 1) * dataset.waypoint_spacing
+    context_images = []
+    for context_index in context_indices:
+        with Image.open(dataset.image_path(name, int(context_index))) as source:
+            context_images.append(resize_to_height(source, preview_image_height))
+
+    image_gap = 16
+    image_top = 64
+    image_widths = [image.width for image in context_images]
+    image_heights = [image.height for image in context_images]
+    max_image_height = max(image_heights) if image_heights else 0
+    images_width = sum(image_widths) + image_gap * max(len(context_images) - 1, 0)
+    traj_width = 304
+    traj_height = 256
+    traj_gap = 24
+    canvas_width = 24 + images_width + traj_gap + traj_width + 24
+    canvas_height = max(320, image_top + max_image_height + 32, 48 + traj_height + 16)
+    canvas = Image.new("RGB", (canvas_width, canvas_height), (250, 250, 250))
+    draw = ImageDraw.Draw(canvas)
+    title = f"{preview_id:04d} {name} idx={current} cmd={cmd_name}"
+    if detail_text:
+        title += f" {detail_text}"
+    draw.text((24, 18), title, fill=(20, 20, 20))
+    x = 24
+    for image_id, image in enumerate(context_images):
+        canvas.paste(image, (x, image_top))
+        frame_color = (30, 140, 70) if image_id == len(context_images) - 1 else (170, 170, 170)
+        draw.rectangle(
+            (x, image_top, x + image.width, image_top + image.height),
+            outline=frame_color,
+            width=3,
+        )
+        label = "current" if image_id == len(context_images) - 1 else f"t-{len(context_images) - 1 - image_id}"
+        draw.text((x, 42), f"{label} idx={int(context_indices[image_id])}", fill=(20, 20, 20))
+        x += image.width + image_gap
+
+    traj_x0 = 24 + images_width + traj_gap
+    draw.text((traj_x0, 18), "teacher trajectory in robot frame", fill=(20, 20, 20))
+    draw_local_trajectory(
+        draw,
+        (traj_x0, 48, traj_x0 + traj_width, 48 + traj_height),
+        local_positions,
+        colors.get(cmd_name, colors["none"]),
+        expected_forward_m=expected_forward_m,
+    )
+    canvas.save(output_path)
+
+
+def render_training_samples(dataset, output_dir, count_per_direction, preview_image_height):
+    if count_per_direction == 0:
+        return []
+    os.makedirs(output_dir, exist_ok=True)
+    remove_pngs(output_dir)
+    written = []
+    selected_samples = preview_indices_per_direction(dataset, count_per_direction)
+    direction_counts = {"straight": 0, "left": 0, "right": 0}
     for preview_id, (_, sample_index) in enumerate(selected_samples):
         name, current = dataset.samples[sample_index]
-        trajectory = dataset.trajectory(name)
-        cmd_name = CMD_DIR_NAMES.get(cmd_dir_index(trajectory["cmd_dir"][current]), "none")
-        action_indices = current + np.arange(dataset.len_traj_pred + 1) * dataset.waypoint_spacing
-        positions = trajectory["position"][action_indices]
-        local_positions = to_local_coords(
-            positions,
-            positions[0],
-            float(trajectory["yaw"][current]),
-        )
-        context_indices = current + np.arange(-dataset.context_size, 1) * dataset.waypoint_spacing
-        context_images = []
-        for context_index in context_indices:
-            with Image.open(dataset.image_path(name, int(context_index))) as source:
-                context_images.append(resize_to_height(source, preview_image_height))
-
-        image_gap = 16
-        image_top = 64
-        image_widths = [image.width for image in context_images]
-        image_heights = [image.height for image in context_images]
-        max_image_height = max(image_heights) if image_heights else 0
-        images_width = sum(image_widths) + image_gap * max(len(context_images) - 1, 0)
-        traj_width = 304
-        traj_height = 256
-        traj_gap = 24
-        canvas_width = 24 + images_width + traj_gap + traj_width + 24
-        canvas_height = max(320, image_top + max_image_height + 32, 48 + traj_height + 16)
-        canvas = Image.new("RGB", (canvas_width, canvas_height), (250, 250, 250))
-        draw = ImageDraw.Draw(canvas)
-        draw.text((24, 18), f"{preview_id:04d} {name} idx={current} cmd={cmd_name}", fill=(20, 20, 20))
-        x = 24
-        for image_id, image in enumerate(context_images):
-            canvas.paste(image, (x, image_top))
-            frame_color = (30, 140, 70) if image_id == len(context_images) - 1 else (170, 170, 170)
-            draw.rectangle(
-                (x, image_top, x + image.width, image_top + image.height),
-                outline=frame_color,
-                width=3,
-            )
-            label = "current" if image_id == len(context_images) - 1 else f"t-{len(context_images) - 1 - image_id}"
-            draw.text((x, 42), f"{label} idx={int(context_indices[image_id])}", fill=(20, 20, 20))
-            x += image.width + image_gap
-
-        traj_x0 = 24 + images_width + traj_gap
-        draw.text((traj_x0, 18), "teacher trajectory in robot frame", fill=(20, 20, 20))
-        draw_local_trajectory(
-            draw,
-            (traj_x0, 48, traj_x0 + traj_width, 48 + traj_height),
-            local_positions,
-            colors.get(cmd_name, colors["none"]),
-            expected_forward_m=expected_forward_m,
+        cmd_name = CMD_DIR_NAMES.get(
+            sample_cmd_dir_index(dataset, sample_index), "none"
         )
         direction_id = direction_counts.get(cmd_name, 0)
         direction_counts[cmd_name] = direction_id + 1
@@ -551,9 +633,76 @@ def render_training_samples(dataset, output_dir, count_per_direction, preview_im
             output_dir,
             f"{cmd_name}_{direction_id:04d}_sample_{preview_id:04d}.png",
         )
-        canvas.save(output_path)
+        render_sample_preview(
+            dataset,
+            sample_index,
+            preview_id,
+            preview_image_height,
+            output_path,
+        )
         written.append(output_path)
     return written
+
+
+def render_opposite_direction_samples(
+    dataset,
+    output_dir,
+    count_per_direction,
+    threshold_deg,
+    preview_image_height,
+):
+    os.makedirs(output_dir, exist_ok=True)
+    remove_pngs(output_dir)
+    records = opposite_direction_records(dataset, threshold_deg)
+    csv_path = os.path.join(output_dir, "samples.csv")
+    fieldnames = [
+        "sample_index",
+        "trajectory",
+        "current_index",
+        "target_direction",
+        "actual_direction",
+        "endpoint_angle_deg",
+        "endpoint_x_m",
+        "endpoint_y_m",
+    ]
+    with open(csv_path, "w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(records)
+
+    selected = []
+    for target in ("left", "right"):
+        target_records = [
+            record for record in records if record["target_direction"] == target
+        ]
+        for index in preview_indices(len(target_records), count_per_direction):
+            selected.append(target_records[index])
+
+    written = []
+    target_counts = {"left": 0, "right": 0}
+    for preview_id, record in enumerate(selected):
+        target = record["target_direction"]
+        target_id = target_counts[target]
+        target_counts[target] += 1
+        output_path = os.path.join(
+            output_dir,
+            f"target_{target}_actual_{record['actual_direction']}_"
+            f"{target_id:04d}_sample_{record['sample_index']:06d}.png",
+        )
+        detail = (
+            f"actual={record['actual_direction']} "
+            f"angle={record['endpoint_angle_deg']:+.1f}deg"
+        )
+        render_sample_preview(
+            dataset,
+            record["sample_index"],
+            preview_id,
+            preview_image_height,
+            output_path,
+            detail_text=detail,
+        )
+        written.append(output_path)
+    return written, records, csv_path
 
 
 def remove_pngs(directory):
@@ -564,19 +713,119 @@ def remove_pngs(directory):
             os.remove(os.path.join(directory, name))
 
 
-def render_trajectory(name, trajectory, canvas, output_path, grid_spacing_m):
+def trainable_indices_by_trajectory(sample_dataset, trajectory_names):
+    indices = {name: [] for name in trajectory_names}
+    for name, current in sample_dataset.samples:
+        if name in indices:
+            indices[name].append(int(current))
+    return {name: sorted(set(values)) for name, values in indices.items()}
+
+
+def trainable_labels_by_trajectory(sample_dataset, trajectory_names):
+    labels = {name: {} for name in trajectory_names}
+    for sample_index, (name, current) in enumerate(sample_dataset.samples):
+        if name in labels:
+            labels[name][int(current)] = sample_cmd_dir_index(
+                sample_dataset, sample_index
+            )
+    return labels
+
+
+def contiguous_trainable_runs(trajectory, current_indices, direction_labels=None):
+    runs = []
+    current_run = []
+    previous = None
+    previous_direction = None
+    for current in current_indices:
+        direction = (
+            direction_labels[current]
+            if direction_labels is not None
+            else cmd_dir_index(trajectory["cmd_dir"][current])
+        )
+        if (
+            current_run
+            and (current != previous + 1 or direction != previous_direction)
+        ):
+            runs.append(current_run)
+            current_run = []
+        current_run.append(current)
+        previous = current
+        previous_direction = direction
+    if current_run:
+        runs.append(current_run)
+    return runs
+
+
+def run_position_sets(trajectory, runs):
+    return [trajectory["position"][run] for run in runs if run]
+
+
+def draw_trainable_runs(
+    draw, trajectory, runs, canvas, width, color=None, direction_labels=None
+):
+    for run in runs:
+        positions = trajectory["position"][run]
+        pixels = canvas.world_to_pixel(positions)
+        run_color = color
+        if run_color is None:
+            direction = (
+                direction_labels[run[0]]
+                if direction_labels is not None
+                else cmd_dir_index(trajectory["cmd_dir"][run[0]])
+            )
+            run_color = CMD_DIR_COLORS.get(direction, CMD_DIR_COLORS[-1])
+        if len(pixels) >= 2:
+            draw_polyline(draw, pixels, run_color, width)
+        elif len(pixels) == 1:
+            point = tuple(map(float, pixels[0]))
+            radius = max(2, width)
+            draw.ellipse(
+                (
+                    point[0] - radius,
+                    point[1] - radius,
+                    point[0] + radius,
+                    point[1] + radius,
+                ),
+                fill=run_color,
+            )
+
+
+def render_trajectory(
+    name,
+    trajectory,
+    trainable_indices,
+    canvas,
+    output_path,
+    grid_spacing_m,
+    candidate_sample_count,
+    direction_labels,
+):
     positions = trajectory["position"]
-    cmd_dirs = trajectory.get("cmd_dir")
-    image = canvas.make(positions)
+    runs = contiguous_trainable_runs(
+        trajectory, trainable_indices, direction_labels
+    )
+    plotted_positions = np.concatenate(run_position_sets(trajectory, runs), axis=0)
+    image = canvas.make(plotted_positions)
     draw = ImageDraw.Draw(image)
     draw_world_grid(draw, canvas, image, grid_spacing_m)
-    pixels = canvas.world_to_pixel(positions)
-    draw_direction_segments(draw, pixels, cmd_dirs, width=4)
+    draw_trainable_runs(
+        draw,
+        trajectory,
+        runs,
+        canvas,
+        width=4,
+        direction_labels=direction_labels,
+    )
+    pixels = canvas.world_to_pixel(plotted_positions)
     draw_start_end(draw, pixels)
-    counts = direction_counts(cmd_dirs)
+    counts = {name: 0 for name in CMD_DIR_NAMES.values()}
+    for direction in direction_labels.values():
+        counts[CMD_DIR_NAMES.get(direction, "none")] += 1
     lines = [
         name,
-        f"samples: {len(positions)}",
+        f"raw poses: {len(positions)}",
+        f"trainable samples: {len(trainable_indices)}",
+        f"skipped tied windows: {candidate_sample_count - len(trainable_indices)}",
         "cmd_dir: "
         + ", ".join(f"{key}={value}" for key, value in counts.items() if value),
     ]
@@ -585,20 +834,49 @@ def render_trajectory(name, trajectory, canvas, output_path, grid_spacing_m):
     image.save(output_path)
 
 
-def render_overview(dataset, trajectory_names, canvas, output_path, grid_spacing_m):
-    position_sets = [dataset.trajectory(name)["position"] for name in trajectory_names]
+def render_overview(
+    dataset,
+    trajectory_names,
+    trainable_indices,
+    canvas,
+    output_path,
+    grid_spacing_m,
+    relabelled_mixed_samples,
+    skipped_tied_samples,
+    trainable_labels,
+):
+    position_sets = []
+    runs_by_name = {}
+    for name in trajectory_names:
+        trajectory = dataset.trajectory(name)
+        runs = contiguous_trainable_runs(
+            trajectory, trainable_indices[name], trainable_labels[name]
+        )
+        runs_by_name[name] = runs
+        position_sets.extend(run_position_sets(trajectory, runs))
     image = canvas.make(np.concatenate(position_sets, axis=0))
     draw = ImageDraw.Draw(image)
     draw_world_grid(draw, canvas, image, grid_spacing_m)
     for index, name in enumerate(trajectory_names):
-        positions = dataset.trajectory(name)["position"]
+        trajectory = dataset.trajectory(name)
+        runs = runs_by_name[name]
+        draw_trainable_runs(
+            draw,
+            trajectory,
+            runs,
+            canvas,
+            width=2,
+            color=color_for_trajectory(index),
+        )
+        positions = np.concatenate(run_position_sets(trajectory, runs), axis=0)
         pixels = canvas.world_to_pixel(positions)
-        draw_polyline(draw, pixels, color_for_trajectory(index), width=2)
         draw_start_end(draw, pixels)
     lines = [
-        "dataset overview",
+        "trainable sample centers",
         f"trajectories: {len(trajectory_names)}",
-        f"samples: {sum(len(dataset.trajectory(name)['position']) for name in trajectory_names)}",
+        f"trainable samples: {sum(len(trainable_indices[name]) for name in trajectory_names)}",
+        f"majority-labelled mixed windows: {relabelled_mixed_samples}",
+        f"skipped tied windows: {skipped_tied_samples}",
     ]
     draw_text_box(draw, lines)
     draw_legend(draw, image)
@@ -628,6 +906,24 @@ def main():
         default=160,
         help="Preview image height in pixels. Aspect ratio is preserved.",
     )
+    parser.add_argument(
+        "--opposite-direction-samples-per-direction",
+        type=int,
+        default=-1,
+        help=(
+            "Opposite teacher trajectory previews per target direction. "
+            "Use -1 for all, 0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--opposite-direction-threshold-deg",
+        type=float,
+        default=2.0,
+        help=(
+            "Minimum endpoint angle magnitude used to classify an opposite "
+            "teacher trajectory."
+        ),
+    )
     args, unknown_args = parser.parse_known_args()
     unexpected_args = [
         arg for arg in unknown_args if not arg.startswith("__") and ":=" not in arg
@@ -652,6 +948,63 @@ def main():
     )
     trajectory_names = select_trajectories(data_dir, trajectory_name)
     dataset = TrajectoryDataset(data_dir, trajectory_names)
+    direction_dataset_enabled = model_cfg["model_type"] == "nomad" or bool(
+        model_cfg.get("direction_conditioning", False)
+    )
+    sample_dataset = None
+    if direction_dataset_enabled:
+        sample_dataset = make_direction_dataset(cfg, data_dir, trajectory_names)
+
+    if sample_dataset is not None:
+        trainable_indices = trainable_indices_by_trajectory(
+            sample_dataset,
+            trajectory_names,
+        )
+        trainable_labels = trainable_labels_by_trajectory(
+            sample_dataset,
+            trajectory_names,
+        )
+        plotted_trajectory_names = [
+            name for name in trajectory_names if trainable_indices[name]
+        ]
+        context_offset = sample_dataset.context_size * sample_dataset.waypoint_spacing
+        action_offset = sample_dataset.len_traj_pred * sample_dataset.waypoint_spacing
+        candidate_sample_counts = {
+            name: max(
+                0,
+                len(dataset.trajectory(name)["position"])
+                - context_offset
+                - action_offset,
+            )
+            for name in trajectory_names
+        }
+        relabelled_mixed_samples = (
+            sample_dataset.relabelled_mixed_cmd_dir_samples
+        )
+        skipped_tied_samples = sample_dataset.skipped_tied_cmd_dir_samples
+    else:
+        trainable_indices = {
+            name: list(range(len(dataset.trajectory(name)["position"])))
+            for name in trajectory_names
+        }
+        trainable_labels = {
+            name: {
+                current: cmd_dir_index(
+                    dataset.trajectory(name)["cmd_dir"][current]
+                )
+                for current in indices
+            }
+            for name, indices in trainable_indices.items()
+        }
+        plotted_trajectory_names = list(trajectory_names)
+        candidate_sample_counts = {
+            name: len(indices) for name, indices in trainable_indices.items()
+        }
+        relabelled_mixed_samples = 0
+        skipped_tied_samples = 0
+
+    if not plotted_trajectory_names:
+        raise ValueError("No trainable trajectory samples to plot")
 
     map_yaml = None
     if not args.no_map:
@@ -670,7 +1023,10 @@ def main():
     remove_pngs(output_dir)
     remove_pngs(trajectories_dir)
 
-    all_positions = [dataset.trajectory(name)["position"] for name in trajectory_names]
+    all_positions = [
+        dataset.trajectory(name)["position"][trainable_indices[name]]
+        for name in plotted_trajectory_names
+    ]
     blank_bounds = bounds_for_positions(all_positions, padding=args.padding_m)
 
     overview_canvas = MapCanvas(
@@ -682,15 +1038,20 @@ def main():
     overview_path = os.path.join(output_dir, "overview.png")
     render_overview(
         dataset,
-        trajectory_names,
+        plotted_trajectory_names,
+        trainable_indices,
         overview_canvas,
         overview_path,
         args.grid_spacing_m,
+        relabelled_mixed_samples,
+        skipped_tied_samples,
+        trainable_labels,
     )
 
-    for name in trajectory_names:
+    for name in plotted_trajectory_names:
         trajectory = dataset.trajectory(name)
-        bounds = bounds_for_positions([trajectory["position"]], padding=args.padding_m)
+        positions = trajectory["position"][trainable_indices[name]]
+        bounds = bounds_for_positions([positions], padding=args.padding_m)
         canvas = MapCanvas(
             map_yaml=map_yaml,
             bounds=bounds,
@@ -700,30 +1061,56 @@ def main():
         render_trajectory(
             name,
             trajectory,
+            trainable_indices[name],
             canvas,
             os.path.join(trajectories_dir, f"{name}.png"),
             args.grid_spacing_m,
+            candidate_sample_counts[name],
+            trainable_labels[name],
         )
 
     training_sample_count = 0
-    if args.training_samples_per_direction != 0:
-        try:
-            sample_dataset = make_direction_dataset(cfg, data_dir, trajectory_names)
-        except ValueError as exc:
-            info(f"skipped training sample previews: {exc}")
-        else:
-            training_sample_paths = render_training_samples(
-                sample_dataset,
-                os.path.join(output_dir, "training_samples"),
-                args.training_samples_per_direction,
-                args.preview_image_height,
-            )
-            training_sample_count = len(training_sample_paths)
+    opposite_preview_count = 0
+    opposite_sample_count = 0
+    if sample_dataset is not None and args.training_samples_per_direction != 0:
+        training_sample_paths = render_training_samples(
+            sample_dataset,
+            os.path.join(output_dir, "training_samples"),
+            args.training_samples_per_direction,
+            args.preview_image_height,
+        )
+        training_sample_count = len(training_sample_paths)
+    if sample_dataset is not None and args.opposite_direction_samples_per_direction != 0:
+        (
+            opposite_sample_paths,
+            opposite_records,
+            opposite_csv_path,
+        ) = render_opposite_direction_samples(
+            sample_dataset,
+            os.path.join(output_dir, "opposite_direction_samples"),
+            args.opposite_direction_samples_per_direction,
+            args.opposite_direction_threshold_deg,
+            args.preview_image_height,
+        )
+        opposite_preview_count = len(opposite_sample_paths)
+        opposite_sample_count = len(opposite_records)
+        info(
+            f"opposite direction samples={opposite_sample_count} "
+            f"previews={opposite_preview_count} "
+            f"threshold_deg={args.opposite_direction_threshold_deg:.1f} "
+            f"csv={opposite_csv_path}"
+        )
 
     map_text = map_yaml if map_yaml else "none"
     info(
-        f"plotted dataset={dataset_type} trajectories={len(trajectory_names)} "
+        f"plotted dataset={dataset_type} "
+        f"trajectories={len(plotted_trajectory_names)}/{len(trajectory_names)} "
+        f"trainable_samples={sum(len(trainable_indices[name]) for name in plotted_trajectory_names)} "
+        f"relabelled_mixed_samples={relabelled_mixed_samples} "
+        f"skipped_tied_samples={skipped_tied_samples} "
         f"training_samples={training_sample_count} "
+        f"opposite_samples={opposite_sample_count} "
+        f"opposite_previews={opposite_preview_count} "
         f"map={map_text} output_dir={output_dir}"
     )
     print(overview_path)

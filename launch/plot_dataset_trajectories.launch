@@ -8,10 +8,12 @@
   <arg name="padding_m" default="1.0"/>
   <arg name="grid_spacing_m" default="1.0"/>
   <arg name="training_samples_per_direction" default="10"/>
+  <arg name="opposite_direction_samples_per_direction" default="-1"/>
+  <arg name="opposite_direction_threshold_deg" default="2.0"/>
   <arg name="preview_image_height" default="160"/>
 
   <node if="$(eval trajectory_name != '')" pkg="vnm_ros" type="plot_dataset_trajectories.py" name="vnm_plot_dataset_trajectories" output="screen"
-        args="--config-dir $(arg config_dir) --dataset-type $(arg dataset_type) --trajectory-name $(arg trajectory_name) --output-dir $(arg output_dir) --map-yaml $(arg map_yaml) --image-size $(arg image_size) --padding-m $(arg padding_m) --grid-spacing-m $(arg grid_spacing_m) --training-samples-per-direction $(arg training_samples_per_direction) --preview-image-height $(arg preview_image_height)"/>
+        args="--config-dir $(arg config_dir) --dataset-type $(arg dataset_type) --trajectory-name $(arg trajectory_name) --output-dir $(arg output_dir) --map-yaml $(arg map_yaml) --image-size $(arg image_size) --padding-m $(arg padding_m) --grid-spacing-m $(arg grid_spacing_m) --training-samples-per-direction $(arg training_samples_per_direction) --opposite-direction-samples-per-direction $(arg opposite_direction_samples_per_direction) --opposite-direction-threshold-deg $(arg opposite_direction_threshold_deg) --preview-image-height $(arg preview_image_height)"/>
   <node unless="$(eval trajectory_name != '')" pkg="vnm_ros" type="plot_dataset_trajectories.py" name="vnm_plot_dataset_trajectories" output="screen"
-        args="--config-dir $(arg config_dir) --dataset-type $(arg dataset_type) --output-dir $(arg output_dir) --map-yaml $(arg map_yaml) --image-size $(arg image_size) --padding-m $(arg padding_m) --grid-spacing-m $(arg grid_spacing_m) --training-samples-per-direction $(arg training_samples_per_direction) --preview-image-height $(arg preview_image_height)"/>
+        args="--config-dir $(arg config_dir) --dataset-type $(arg dataset_type) --output-dir $(arg output_dir) --map-yaml $(arg map_yaml) --image-size $(arg image_size) --padding-m $(arg padding_m) --grid-spacing-m $(arg grid_spacing_m) --training-samples-per-direction $(arg training_samples_per_direction) --opposite-direction-samples-per-direction $(arg opposite_direction_samples_per_direction) --opposite-direction-threshold-deg $(arg opposite_direction_threshold_deg) --preview-image-height $(arg preview_image_height)"/>
 </launch>
