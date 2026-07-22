@@ -9,15 +9,22 @@ from torch.utils.data import Dataset
 from vnm_ros.datasets.dataset_utils import numeric_image_files
 
 
+def discover_trajectory_names(data_dir: str) -> List[str]:
+    names = []
+    for root, directories, files in os.walk(data_dir):
+        directories.sort()
+        if "traj_data.pkl" not in files:
+            continue
+        names.append(os.path.relpath(root, data_dir))
+        directories[:] = []
+    return sorted(names)
+
+
 class TrajectoryDataset(Dataset):
     def __init__(self, data_dir: str, trajectory_names: Optional[Sequence[str]] = None):
         self.data_dir = data_dir
         if trajectory_names is None:
-            trajectory_names = sorted(
-                name
-                for name in os.listdir(data_dir)
-                if os.path.isfile(os.path.join(data_dir, name, "traj_data.pkl"))
-            )
+            trajectory_names = discover_trajectory_names(data_dir)
         self.trajectory_names = list(trajectory_names)
         if not self.trajectory_names:
             raise ValueError(f"No trajectory directories found in {data_dir}")
