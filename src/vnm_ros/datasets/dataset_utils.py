@@ -46,3 +46,23 @@ def angle_to_sin_cos(actions: np.ndarray) -> np.ndarray:
     result[:, 2] = np.cos(actions[:, 2])
     result[:, 3] = np.sin(actions[:, 2])
     return result
+
+
+def majority_cmd_dir_label(cmd_dirs: np.ndarray):
+    cmd_dirs = np.asarray(cmd_dirs)
+    if cmd_dirs.ndim != 2 or cmd_dirs.shape[1] < 3:
+        raise ValueError(f"cmd_dirs must have shape [N, >=3], got {cmd_dirs.shape}")
+    labels = np.argmax(cmd_dirs[:, :3], axis=1)
+    valid = np.sum(cmd_dirs[:, :3], axis=1) > 0.0
+    labels = np.where(valid, labels, 0)
+    counts = np.bincount(labels, minlength=3)
+    winners = np.flatnonzero(counts == counts.max())
+    if len(winners) != 1:
+        return None
+    return int(winners[0])
+
+
+def cmd_dir_one_hot(label: int) -> np.ndarray:
+    result = np.zeros(3, dtype=np.float32)
+    result[int(label)] = 1.0
+    return result

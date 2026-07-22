@@ -4,6 +4,7 @@ import copy
 import math
 import os
 import random
+import re
 import sys
 from datetime import datetime
 
@@ -17,9 +18,11 @@ from vnm_ros.datasets import NoMaDDirectionDataset, ViNTDataset, ViNTDirectionDa
 from vnm_ros.models.model_loader import (
     build_model,
     load_model_weights,
+    validate_checkpoint_action_scale,
 )
-from vnm_ros.training.checkpoint import load_training_checkpoint
+from vnm_ros.training.checkpoint import load_training_checkpoint, save_config_yaml
 from vnm_ros.training.nomad_trainer import NoMaDTrainer
+from vnm_ros.training.optimizer import build_parameter_groups
 from vnm_ros.training.trainer import Trainer
 from vnm_ros.utils.config import load_runtime_config, model_dataset_dir, package_root, resolve_path
 
@@ -66,7 +69,9 @@ def make_nomad_dataset(config, model_cfg, dataset_type):
         context_size=int(model_cfg["context_size"]),
         len_traj_pred=int(model_cfg["len_traj_pred"]),
         waypoint_spacing=int(dataset["waypoint_spacing"]),
+        metric_waypoint_spacing=float(dataset["metric_waypoint_spacing"]),
         action_stats=model_cfg["action_stats"],
+        normalize=bool(model_cfg.get("normalize", True)),
         center_crop=bool(model_cfg.get("image_center_crop", False)),
     )
 
@@ -100,9 +105,12 @@ def make_cmd_dir_loss_weights(dataset, training):
     return class_weights.astype(np.float32), info
 
 
-def dataset_name(data_dir):
+def dataset_name(data_dir, model_type=None):
     normalized = os.path.normpath(data_dir)
     directory_name = os.path.basename(normalized)
+    if model_type is not None and directory_name == str(model_type):
+        normalized = os.path.dirname(normalized)
+        directory_name = os.path.basename(normalized)
     if directory_name in ("train", "test"):
         return os.path.basename(os.path.dirname(normalized))
     return directory_name
@@ -112,25 +120,88 @@ def architecture_name(model_cfg):
     return str(model_cfg["model_type"])
 
 
-def training_artifact_dirs(model_cfg, run_name):
+def configured_model_name(training):
+    model_name = str(training.get("model_name", "")).strip()
+    if model_name and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", model_name):
+        raise ValueError(
+            "training.model_name must start with an ASCII letter or digit and "
+            "contain only letters, digits, '_', '-', and '.'"
+        )
+    return model_name
+
+
+def named_checkpoint(model_name, checkpoint_name):
+    return f"{model_name}_{checkpoint_name}" if model_name else checkpoint_name
+
+
+def make_run_name(training):
+    model_name = configured_model_name(training)
+    model_part = f"_{model_name}" if model_name else ""
+    return (
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        f"{model_part}_ep{int(training['epoch']):03d}"
+    )
+
+
+def training_artifact_dirs(model_cfg, dataset, run_name):
     architecture = architecture_name(model_cfg)
-    run_dir = resolve_path(os.path.join("runs", architecture, run_name), package_root())
-    weights_dir = resolve_path(os.path.join("weights", architecture), package_root())
+    run_dir = resolve_path(
+        os.path.join("runs", architecture, dataset, run_name), package_root()
+    )
+    weights_dir = resolve_path(
+        os.path.join("weights", architecture, dataset), package_root()
+    )
     return run_dir, weights_dir
 
 
-def configured_epoch_sweep(training):
-    epoch_sweep = training.get("epoch_sweep", [])
-    if epoch_sweep is None:
-        return []
-    if isinstance(epoch_sweep, int):
-        epoch_sweep = [epoch_sweep]
+def training_run_config(
+    model_cfg,
+    train_cfg,
+    run_name,
+    dataset,
+    train_data_dir,
+    run_dir,
+    weights_dir,
+    device,
+    train_samples,
+    test_samples,
+    use_test,
+    cmd_dir_loss_weight_info,
+):
+    effective_train_cfg = copy.deepcopy(train_cfg)
+    effective_training_cfg = effective_train_cfg["training"]
+    effective_training_cfg["use_test"] = bool(use_test)
+    effective_training_cfg["cmd_dir_loss_weight_info"] = cmd_dir_loss_weight_info
+    return {
+        "model": copy.deepcopy(model_cfg),
+        "train": effective_train_cfg,
+        "artifacts": {
+            "run_name": run_name,
+            "model_name": configured_model_name(effective_training_cfg),
+            "dataset_name": dataset,
+            "train_data_dir": train_data_dir,
+            "run_dir": run_dir,
+            "weights_dir": weights_dir,
+            "device": str(device),
+            "train_samples": int(train_samples),
+            "test_samples": int(test_samples),
+        },
+    }
+
+
+def configured_epochs(training):
+    epoch_values = training.get("epoch")
+    if not isinstance(epoch_values, (list, tuple)) or not epoch_values:
+        raise ValueError("training.epoch must be a non-empty list of epoch counts")
 
     epochs = []
-    for epoch_count in epoch_sweep:
-        epoch_count = int(epoch_count)
-        if epoch_count <= 0:
-            raise ValueError("epoch_sweep must contain positive epoch counts")
+    for epoch_count in epoch_values:
+        if (
+            isinstance(epoch_count, bool)
+            or not isinstance(epoch_count, int)
+            or epoch_count <= 0
+        ):
+            raise ValueError("training.epoch must contain positive integer epoch counts")
         epochs.append(epoch_count)
     return epochs
 
@@ -138,8 +209,12 @@ def configured_epoch_sweep(training):
 def train_cfg_for_epoch_count(train_cfg, epoch_count):
     run_train_cfg = copy.deepcopy(train_cfg)
     training = run_train_cfg["training"]
-    training["epochs"] = int(epoch_count)
-    training["final_checkpoint_name"] = f"epoch{int(epoch_count):03d}.pth"
+    training["epoch"] = int(epoch_count)
+    model_name = configured_model_name(training)
+    training["best_checkpoint_name"] = named_checkpoint(model_name, "best.pth")
+    training["final_checkpoint_name"] = named_checkpoint(
+        model_name, f"epoch{int(epoch_count):03d}.pth"
+    )
     return run_train_cfg
 
 
@@ -149,17 +224,13 @@ def run_training_jobs(train_fn, args, train_cfg, model_cfg):
         return
 
     training = train_cfg["training"]
-    epoch_sweep = configured_epoch_sweep(training)
-    if not epoch_sweep:
-        train_fn(args, train_cfg, dict(model_cfg))
-        return
+    epoch_counts = configured_epochs(training)
+    if training.get("resume", "") and len(epoch_counts) > 1:
+        raise ValueError("resume can only be used with one training.epoch value")
 
-    if training.get("resume", ""):
-        raise ValueError("epoch_sweep cannot be used with resume")
-
-    for epoch_count in epoch_sweep:
+    for epoch_count in epoch_counts:
         run_train_cfg = train_cfg_for_epoch_count(train_cfg, epoch_count)
-        print(f"starting epoch_sweep run epochs={epoch_count}")
+        print(f"starting training run epoch={epoch_count}")
         train_fn(args, run_train_cfg, dict(model_cfg))
 
 
@@ -222,7 +293,7 @@ def build_scheduler(optimizer, training):
     if scheduler_name in ("", "none", "null"):
         return None
 
-    epochs = int(training["epochs"])
+    epochs = int(training["epoch"])
     if scheduler_name == "cosine":
         return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -325,11 +396,10 @@ def train_vint_direction(args, train_cfg, model_cfg):
     frozen_modules.extend(layer_modules)
     frozen_layer_names.extend(layer_names)
 
+    parameter_groups, learning_rate_groups = build_parameter_groups(model, training)
     trainable_parameters = [p for p in model.parameters() if p.requires_grad]
-    if not trainable_parameters:
-        raise ValueError("No trainable model parameters")
     optimizer = torch.optim.AdamW(
-        trainable_parameters,
+        parameter_groups,
         lr=float(training["learning_rate"]),
         weight_decay=float(training["weight_decay"]),
     )
@@ -367,10 +437,28 @@ def train_vint_direction(args, train_cfg, model_cfg):
         if validation_dataset is not None
         else None
     )
-    run_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_ep{int(training['epochs']):03d}"
-    run_dir, weights_dir = training_artifact_dirs(model_cfg, run_name)
-    checkpoint_train_cfg = dict(train_cfg)
-    checkpoint_train_cfg["run_name"] = run_name
+    run_name = make_run_name(training)
+    train_data_dir = model_dataset_dir(
+        train_cfg["dataset"], "train", model_cfg["model_type"]
+    )
+    dataset = dataset_name(train_data_dir, model_cfg["model_type"])
+    run_dir, weights_dir = training_artifact_dirs(model_cfg, dataset, run_name)
+    test_samples = len(validation_dataset) if validation_dataset is not None else 0
+    checkpoint_config = training_run_config(
+        model_cfg=model_cfg,
+        train_cfg=train_cfg,
+        run_name=run_name,
+        dataset=dataset,
+        train_data_dir=train_data_dir,
+        run_dir=run_dir,
+        weights_dir=weights_dir,
+        device=device,
+        train_samples=len(train_dataset),
+        test_samples=test_samples,
+        use_test=use_test,
+        cmd_dir_loss_weight_info=cmd_dir_loss_weight_info,
+    )
+    save_config_yaml(os.path.join(run_dir, "training_config.yaml"), checkpoint_config)
     trainer = Trainer(
         model=model,
         optimizer=optimizer,
@@ -378,30 +466,30 @@ def train_vint_direction(args, train_cfg, model_cfg):
         device=device,
         run_dir=run_dir,
         weights_dir=weights_dir,
-        config={"model": model_cfg, "train": checkpoint_train_cfg},
+        config=checkpoint_config,
         alpha=float(training["alpha"]),
         gradient_clip=float(training.get("gradient_clip", 0.0)),
         enable_tensorboard=bool(training.get("tensorboard", True)),
         frozen_modules=frozen_modules,
         cmd_dir_loss_weights=cmd_dir_loss_weights,
     )
-    test_samples = len(validation_dataset) if validation_dataset is not None else 0
-    train_data_dir = model_dataset_dir(
-        train_cfg["dataset"], "train", model_cfg["model_type"]
-    )
     print(
         f"run_name={run_name} architecture={architecture_name(model_cfg)} "
+        f"model_name={configured_model_name(training) or '(default)'} "
         f"run_dir={run_dir} weights_dir={weights_dir} "
-        f"dataset_name={dataset_name(train_data_dir)} "
+        f"dataset_name={dataset} "
         f"train_data_dir={train_data_dir} "
         f"device={device} train_samples={len(train_dataset)} "
         f"use_test={use_test} test_samples={test_samples} "
         f"direction_conditioning={bool(model_cfg.get('direction_conditioning', False))} "
-        f"skipped_mixed_cmd_dir_samples="
-        f"{getattr(train_dataset, 'skipped_mixed_cmd_dir_samples', 0)} "
+        f"relabelled_mixed_cmd_dir_samples="
+        f"{getattr(train_dataset, 'relabelled_mixed_cmd_dir_samples', 0)} "
+        f"skipped_tied_cmd_dir_samples="
+        f"{getattr(train_dataset, 'skipped_tied_cmd_dir_samples', 0)} "
         f"cmd_dir_loss_weighting={cmd_dir_loss_weights is not None} "
         f"cmd_dir_loss_weight_info={cmd_dir_loss_weight_info} "
         f"freeze_layers={frozen_layer_names} "
+        f"learning_rate_groups={learning_rate_groups} "
         f"frozen_parameters={frozen_parameter_count(model)} "
         f"trainable_parameters={sum(p.numel() for p in trainable_parameters)}"
     )
@@ -410,10 +498,10 @@ def train_vint_direction(args, train_cfg, model_cfg):
             train_cfg["dataset"], "test", model_cfg["model_type"]
         )
         print(
-            f"test_dataset_name={dataset_name(test_data_dir)} "
+            f"test_dataset_name={dataset_name(test_data_dir, model_cfg['model_type'])} "
             f"test_data_dir={test_data_dir}"
         )
-    trainer.fit(train_loader, validation_loader, start_epoch, int(training["epochs"]))
+    trainer.fit(train_loader, validation_loader, start_epoch, int(training["epoch"]))
 
 
 def train_nomad_direction(args, train_cfg, model_cfg):
@@ -438,7 +526,14 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         pretrained_weights_path = resolve_path(pretrained_weights_path, package_root())
         if not os.path.isfile(pretrained_weights_path):
             raise FileNotFoundError(pretrained_weights_path)
-        load_model_weights(model, pretrained_weights_path, device, strict=False)
+        checkpoint = load_model_weights(
+            model, pretrained_weights_path, device, strict=False
+        )
+        validate_checkpoint_action_scale(
+            checkpoint,
+            model_cfg,
+            pretrained_weights_path,
+        )
         print(f"loaded pretrained NoMaD model from {pretrained_weights_path}")
 
     frozen_modules = []
@@ -454,11 +549,10 @@ def train_nomad_direction(args, train_cfg, model_cfg):
     frozen_modules.extend(layer_modules)
     frozen_layer_names.extend(layer_names)
 
+    parameter_groups, learning_rate_groups = build_parameter_groups(model, training)
     trainable_parameters = [p for p in model.parameters() if p.requires_grad]
-    if not trainable_parameters:
-        raise ValueError("No trainable model parameters")
     optimizer = torch.optim.AdamW(
-        trainable_parameters,
+        parameter_groups,
         lr=float(training["learning_rate"]),
         weight_decay=float(training["weight_decay"]),
     )
@@ -479,10 +573,28 @@ def train_nomad_direction(args, train_cfg, model_cfg):
     if resume:
         resume_path = resolve_path(resume, package_root())
         checkpoint = load_training_checkpoint(
-            resume_path, model, optimizer, scheduler, device
+            resume_path,
+            model,
+            optimizer,
+            scheduler,
+            device,
+            expected_model_config=model_cfg,
         )
         start_epoch = int(checkpoint.get("epoch", -1)) + 1
         print(f"resumed NoMaD training from {resume_path} at epoch {start_epoch}")
+
+    try:
+        from diffusers.training_utils import EMAModel
+    except ImportError as exc:
+        raise ImportError("NoMaD direction fine-tuning requires diffusers.") from exc
+    ema_model = EMAModel(
+        model.parameters(),
+        decay=0.9999,
+        use_ema_warmup=True,
+        power=0.75,
+    )
+    if resume and checkpoint.get("ema_state_dict"):
+        ema_model.load_state_dict(checkpoint["ema_state_dict"])
 
     use_test = bool(training.get("use_test", True))
     if args.use_test is not None:
@@ -507,10 +619,28 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         if validation_dataset is not None
         else None
     )
-    run_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_ep{int(training['epochs']):03d}"
-    run_dir, weights_dir = training_artifact_dirs(model_cfg, run_name)
-    checkpoint_train_cfg = dict(train_cfg)
-    checkpoint_train_cfg["run_name"] = run_name
+    run_name = make_run_name(training)
+    train_data_dir = model_dataset_dir(
+        train_cfg["dataset"], "train", model_cfg["model_type"]
+    )
+    dataset = dataset_name(train_data_dir, model_cfg["model_type"])
+    run_dir, weights_dir = training_artifact_dirs(model_cfg, dataset, run_name)
+    test_samples = len(validation_dataset) if validation_dataset is not None else 0
+    checkpoint_config = training_run_config(
+        model_cfg=model_cfg,
+        train_cfg=train_cfg,
+        run_name=run_name,
+        dataset=dataset,
+        train_data_dir=train_data_dir,
+        run_dir=run_dir,
+        weights_dir=weights_dir,
+        device=device,
+        train_samples=len(train_dataset),
+        test_samples=test_samples,
+        use_test=use_test,
+        cmd_dir_loss_weight_info=cmd_dir_loss_weight_info,
+    )
+    save_config_yaml(os.path.join(run_dir, "training_config.yaml"), checkpoint_config)
     trainer = NoMaDTrainer(
         model=model,
         optimizer=optimizer,
@@ -519,34 +649,39 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         device=device,
         run_dir=run_dir,
         weights_dir=weights_dir,
-        config={"model": model_cfg, "train": checkpoint_train_cfg},
+        config=checkpoint_config,
         gradient_clip=float(training.get("gradient_clip", 0.0)),
         enable_tensorboard=bool(training.get("tensorboard", True)),
         frozen_modules=frozen_modules,
         cmd_dir_loss_weights=cmd_dir_loss_weights,
-    )
-    test_samples = len(validation_dataset) if validation_dataset is not None else 0
-    train_data_dir = model_dataset_dir(
-        train_cfg["dataset"], "train", model_cfg["model_type"]
+        ema_model=ema_model,
     )
     print(
         f"run_name={run_name} architecture={architecture_name(model_cfg)} "
+        f"model_name={configured_model_name(training) or '(default)'} "
         f"run_dir={run_dir} weights_dir={weights_dir} "
-        f"dataset_name={dataset_name(train_data_dir)} "
+        f"dataset_name={dataset} "
         f"train_data_dir={train_data_dir} "
         f"device={device} train_samples={len(train_dataset)} "
-        f"skipped_mixed_cmd_dir_samples="
-        f"{getattr(train_dataset, 'skipped_mixed_cmd_dir_samples', 0)} "
+        f"action_normalize={train_dataset.normalize} "
+        f"metric_waypoint_spacing={train_dataset.metric_waypoint_spacing} "
+        f"relabelled_mixed_cmd_dir_samples="
+        f"{getattr(train_dataset, 'relabelled_mixed_cmd_dir_samples', 0)} "
+        f"skipped_tied_cmd_dir_samples="
+        f"{getattr(train_dataset, 'skipped_tied_cmd_dir_samples', 0)} "
         f"use_test={use_test} test_samples={test_samples} "
-        f"test_skipped_mixed_cmd_dir_samples="
-        f"{getattr(validation_dataset, 'skipped_mixed_cmd_dir_samples', 0) if validation_dataset is not None else 0} "
+        f"test_relabelled_mixed_cmd_dir_samples="
+        f"{getattr(validation_dataset, 'relabelled_mixed_cmd_dir_samples', 0) if validation_dataset is not None else 0} "
+        f"test_skipped_tied_cmd_dir_samples="
+        f"{getattr(validation_dataset, 'skipped_tied_cmd_dir_samples', 0) if validation_dataset is not None else 0} "
         f"cmd_dir_loss_weighting={cmd_dir_loss_weights is not None} "
         f"cmd_dir_loss_weight_info={cmd_dir_loss_weight_info} "
         f"freeze_layers={frozen_layer_names} "
+        f"learning_rate_groups={learning_rate_groups} "
         f"frozen_parameters={frozen_parameter_count(model)} "
         f"trainable_parameters={sum(p.numel() for p in trainable_parameters)}"
     )
-    trainer.fit(train_loader, validation_loader, start_epoch, int(training["epochs"]))
+    trainer.fit(train_loader, validation_loader, start_epoch, int(training["epoch"]))
 
 
 if __name__ == "__main__":

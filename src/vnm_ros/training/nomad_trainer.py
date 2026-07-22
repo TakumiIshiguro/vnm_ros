@@ -8,6 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import Normalize
 
 from vnm_ros.training.checkpoint import save_checkpoint
+from vnm_ros.training.optimizer import optimizer_learning_rates
 from vnm_ros.training.trainer import CMD_DIR_NAMES, cmd_dir_labels
 
 
@@ -26,6 +27,7 @@ class NoMaDTrainer:
         enable_tensorboard: bool = True,
         frozen_modules=None,
         cmd_dir_loss_weights=None,
+        ema_model=None,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -42,6 +44,9 @@ class NoMaDTrainer:
             if cmd_dir_loss_weights is not None
             else None
         )
+        if ema_model is None:
+            raise ValueError("NoMaDTrainer requires an EMA model")
+        self.ema_model = ema_model
         self.writer = (
             SummaryWriter(log_dir=os.path.join(run_dir, "tensorboard"))
             if enable_tensorboard
@@ -49,6 +54,9 @@ class NoMaDTrainer:
         )
         self.best_validation_loss = float("inf")
         training_cfg = config.get("train", {}).get("training", {})
+        self.best_checkpoint_name = training_cfg.get(
+            "best_checkpoint_name", "best.pth"
+        )
         self.final_checkpoint_name = training_cfg.get("final_checkpoint_name", "")
         self.normalize = Normalize(
             mean=[0.485, 0.456, 0.406],
@@ -137,6 +145,7 @@ class NoMaDTrainer:
                             self.model.parameters(), self.gradient_clip
                         )
                     self.optimizer.step()
+                    self.ema_model.step(self.model.parameters())
             totals["loss"] = totals.get("loss", 0.0) + float(loss.item()) * batch_size
             counts["loss"] = counts.get("loss", 0) + batch_size
             labels = cmd_dir_labels(data["cmd_dir"])
@@ -154,13 +163,19 @@ class NoMaDTrainer:
     def fit(self, train_loader, validation_loader, start_epoch: int, epochs: int):
         history_path = os.path.join(self.run_dir, "metrics.jsonl")
         for epoch in range(start_epoch, epochs):
-            learning_rate = self.optimizer.param_groups[0]["lr"]
+            learning_rates = optimizer_learning_rates(self.optimizer)
+            learning_rate = next(iter(learning_rates.values()))
             train_metrics = self.run_epoch(train_loader, training=True)
-            validation_metrics = (
-                self.run_epoch(validation_loader, training=False)
-                if validation_loader is not None
-                else None
-            )
+            validation_metrics = None
+            if validation_loader is not None:
+                self.ema_model.store(self.model.parameters())
+                self.ema_model.copy_to(self.model.parameters())
+                try:
+                    validation_metrics = self.run_epoch(
+                        validation_loader, training=False
+                    )
+                finally:
+                    self.ema_model.restore(self.model.parameters())
             if self.scheduler is not None:
                 self.scheduler.step()
 
@@ -169,6 +184,7 @@ class NoMaDTrainer:
                 "train": train_metrics,
                 "validation": validation_metrics,
                 "learning_rate": learning_rate,
+                "learning_rates": learning_rates,
             }
             if validation_metrics is None:
                 record.pop("validation")
@@ -183,6 +199,10 @@ class NoMaDTrainer:
                     for name, value in validation_metrics.items():
                         self.writer.add_scalar(f"test/{name}", value, epoch)
                 self.writer.add_scalar("training/learning_rate", learning_rate, epoch)
+                for group_name, group_rate in learning_rates.items():
+                    self.writer.add_scalar(
+                        f"training/learning_rate/{group_name}", group_rate, epoch
+                    )
                 self.writer.flush()
 
             monitored_loss = (
@@ -192,6 +212,16 @@ class NoMaDTrainer:
             )
             is_best = monitored_loss < self.best_validation_loss
             self.best_validation_loss = min(self.best_validation_loss, monitored_loss)
+            training_state_dict = self.model.state_dict()
+            self.ema_model.store(self.model.parameters())
+            self.ema_model.copy_to(self.model.parameters())
+            try:
+                inference_state_dict = {
+                    key: value.detach().clone()
+                    for key, value in self.model.state_dict().items()
+                }
+            finally:
+                self.ema_model.restore(self.model.parameters())
             common = dict(
                 model=self.model,
                 optimizer=self.optimizer,
@@ -199,10 +229,15 @@ class NoMaDTrainer:
                 epoch=epoch,
                 best_validation_loss=self.best_validation_loss,
                 config=self.config,
+                inference_state_dict=inference_state_dict,
+                training_state_dict=training_state_dict,
+                ema_state_dict=self.ema_model.state_dict(),
             )
-            save_checkpoint(os.path.join(self.weights_dir, "latest.pth"), **common)
             if is_best:
-                save_checkpoint(os.path.join(self.weights_dir, "best.pth"), **common)
+                save_checkpoint(
+                    os.path.join(self.weights_dir, self.best_checkpoint_name),
+                    **common,
+                )
             if epoch + 1 == epochs and self.final_checkpoint_name:
                 save_checkpoint(
                     os.path.join(self.weights_dir, self.final_checkpoint_name),

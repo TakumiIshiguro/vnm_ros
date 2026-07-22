@@ -3,7 +3,13 @@ from typing import Optional, Sequence
 import numpy as np
 import torch
 
-from vnm_ros.datasets.dataset_utils import angle_to_sin_cos, load_image, to_local_coords
+from vnm_ros.datasets.dataset_utils import (
+    angle_to_sin_cos,
+    cmd_dir_one_hot,
+    load_image,
+    majority_cmd_dir_label,
+    to_local_coords,
+)
 from vnm_ros.datasets.trajectory_dataset import TrajectoryDataset
 
 
@@ -30,6 +36,8 @@ class ViNTDirectionDataset(TrajectoryDataset):
         self.learn_angle = bool(learn_angle)
         self.center_crop = bool(center_crop)
         self.skipped_mixed_cmd_dir_samples = 0
+        self.skipped_tied_cmd_dir_samples = 0
+        self.relabelled_mixed_cmd_dir_samples = 0
         super().__init__(data_dir, trajectory_names=trajectory_names)
         self.samples = self._build_index()
 
@@ -43,37 +51,43 @@ class ViNTDirectionDataset(TrajectoryDataset):
 
     def _build_index(self):
         samples = []
+        sample_labels = []
         context_offset = self.context_size * self.waypoint_spacing
         action_offset = self.len_traj_pred * self.waypoint_spacing
         for name in self.trajectory_names:
             trajectory = self.trajectory(name)
             length = len(trajectory["position"])
             for current in range(context_offset, length - action_offset):
-                if not self._cmd_dir_consistent(trajectory, current):
+                cmd_dirs = self._sample_cmd_dirs(trajectory, current)
+                label = majority_cmd_dir_label(cmd_dirs)
+                if label is None:
                     self.skipped_mixed_cmd_dir_samples += 1
+                    self.skipped_tied_cmd_dir_samples += 1
                     continue
+                window_labels = np.argmax(cmd_dirs[:, :3], axis=1)
+                valid = np.sum(cmd_dirs[:, :3], axis=1) > 0.0
+                window_labels = np.where(valid, window_labels, 0)
+                if np.any(window_labels != window_labels[0]):
+                    self.relabelled_mixed_cmd_dir_samples += 1
                 samples.append((name, current))
+                sample_labels.append(label)
         if not samples:
             raise ValueError("No trainable ViNT direction samples; trajectories may be too short")
+        self._sample_cmd_dir_labels = np.asarray(sample_labels, dtype=np.int64)
         return samples
 
-    def _cmd_dir_consistent(self, trajectory: dict, current: int) -> bool:
+    def _sample_cmd_dirs(self, trajectory: dict, current: int) -> np.ndarray:
         indices = current + np.arange(self.len_traj_pred + 1) * self.waypoint_spacing
-        cmd_dirs = trajectory["cmd_dir"][indices, :3]
-        labels = np.argmax(cmd_dirs, axis=1)
-        valid = np.sum(cmd_dirs, axis=1) > 0.0
-        labels = np.where(valid, labels, 0)
-        return bool(np.all(labels == labels[0]))
+        return trajectory["cmd_dir"][indices, :3]
 
     def sample_cmd_dir_labels(self) -> np.ndarray:
-        labels = []
-        for name, current in self.samples:
-            cmd_dir = self.trajectory(name)["cmd_dir"][current][:3]
-            if np.sum(cmd_dir) <= 0.0:
-                labels.append(0)
-            else:
-                labels.append(int(np.argmax(cmd_dir)))
-        return np.asarray(labels, dtype=np.int64)
+        return self._sample_cmd_dir_labels.copy()
+
+    def sample_cmd_dir_label(self, index: int) -> int:
+        return int(self._sample_cmd_dir_labels[index])
+
+    def sample_cmd_dir(self, index: int) -> np.ndarray:
+        return cmd_dir_one_hot(self.sample_cmd_dir_label(index))
 
     def __len__(self):
         return len(self.samples)
@@ -110,9 +124,7 @@ class ViNTDirectionDataset(TrajectoryDataset):
             ],
             dim=0,
         )
-        cmd_dir = trajectory["cmd_dir"][current][:3].astype(np.float32)
-        if cmd_dir.sum() <= 0:
-            cmd_dir = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        cmd_dir = self.sample_cmd_dir(index)
         return {
             "observation": observations,
             "cmd_dir": torch.from_numpy(cmd_dir),

@@ -34,6 +34,52 @@ def checkpoint_state_dict(checkpoint):
     return checkpoint
 
 
+def validate_checkpoint_action_scale(checkpoint, config: Dict, checkpoint_path=""):
+    if config.get("model_type") != "nomad" or not isinstance(checkpoint, dict):
+        return
+    checkpoint_config = checkpoint.get("config", {})
+    if not isinstance(checkpoint_config, dict):
+        return
+    checkpoint_model = checkpoint_config.get("model", {})
+    if not isinstance(checkpoint_model, dict):
+        return
+    _validate_checkpoint_direction_mode(checkpoint_model, config, checkpoint_path)
+    if "normalize" not in checkpoint_model:
+        return
+    checkpoint_normalize = bool(checkpoint_model["normalize"])
+    configured_normalize = bool(config.get("normalize", True))
+    if checkpoint_normalize == configured_normalize:
+        return
+    label = checkpoint_path or "checkpoint"
+    raise ValueError(
+        f"{label}: NoMaD action scale mismatch: checkpoint normalize="
+        f"{checkpoint_normalize}, configured normalize={configured_normalize}. "
+        "Use a checkpoint trained with the same normalize setting or retrain "
+        "from the official pretrained weights."
+    )
+
+
+def _validate_checkpoint_direction_mode(
+    checkpoint_model: Dict, config: Dict, checkpoint_path=""
+):
+    if not bool(config.get("direction_conditioning", False)):
+        return
+    if not bool(checkpoint_model.get("direction_conditioning", False)):
+        return
+    configured_mode = str(config.get("direction_conditioning_mode", "token"))
+    checkpoint_mode = str(
+        checkpoint_model.get("direction_conditioning_mode", "token")
+    )
+    if checkpoint_mode == configured_mode:
+        return
+    label = checkpoint_path or "checkpoint"
+    raise ValueError(
+        f"{label}: NoMaD direction conditioning mismatch: checkpoint mode="
+        f"{checkpoint_mode}, configured mode={configured_mode}. Retrain the "
+        "direction encoder from the official pretrained weights."
+    )
+
+
 def load_model_weights(model, checkpoint_path: str, device, strict: bool = True):
     import torch
 
@@ -91,6 +137,9 @@ def _build_nomad(config: Dict):
     encoding_size = int(config.get("encoding_size", config.get("obs_encoding_size", 256)))
     direction_encoder = None
     if bool(config.get("direction_conditioning", False)):
+        direction_mode = str(config.get("direction_conditioning_mode", "token"))
+        if direction_mode != "token":
+            raise ValueError("NoMaD only supports direction_conditioning_mode: token")
         direction_encoder = DirectionEncoder(
             embedding_dim=encoding_size,
             input_dim=int(config.get("direction_num_commands", 3)),
@@ -162,7 +211,8 @@ def load_model(checkpoint_path: str, config: Dict, device):
         and not bool(config.get("direction_conditioning", False))
     )
     strict = bool(config.get("strict_load", default_strict))
-    load_model_weights(model, checkpoint_path, device, strict=strict)
+    checkpoint = load_model_weights(model, checkpoint_path, device, strict=strict)
+    validate_checkpoint_action_scale(checkpoint, config, checkpoint_path)
     model.to(device)
     model.eval()
     return model

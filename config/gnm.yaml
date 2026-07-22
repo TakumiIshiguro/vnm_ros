@@ -51,15 +51,16 @@ collection:
   min_trajectory_samples: auto
 
 training:
+  model_name: ""
   pretrained_weights_path: weights/gnm.pth
   freeze_layers: []
   use_test: false
   tensorboard: true
-  epochs: 100
-  epoch_sweep: [5, 10, 15, 20]
+  epoch: [5, 10, 15, 20]
   batch_size: 64
   num_workers: 4
   learning_rate: 0.0001
+  layer_learning_rates: {}
   weight_decay: 0.0001
   alpha: 0.5
   gradient_clip: 1.0

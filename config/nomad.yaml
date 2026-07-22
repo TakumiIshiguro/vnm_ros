@@ -3,9 +3,9 @@ device: auto
 
 paths:
   rosbag:
-    path: "/home/takumi/bags/sim_0.2.bag"
+    path: "/home/takumi/bags/sim_0.8.bag"
   dataset:
-    train_data_dir: dataset/mix/
+    train_data_dir: dataset/nav/
     # train_data_dir: dataset/0.2_3hz/
 
     # test_data_dir: dataset/nav/
@@ -19,9 +19,10 @@ model:
   mha_num_attention_layers: 4
   mha_ff_dim_factor: 4
   context_type: temporal
-  normalize: false
+  normalize: true
   waypoint_index: 2
-  checkpoint_path: weights/nomad/epoch010.pth
+  # checkpoint_path: weights/nomad/nav/epoch005.pth
+  checkpoint_path: weights/nomad/nav/stage_v2_epoch010.pth
   # checkpoint_path: weights/nomad.pth
   encoding_size: 256
   context_size: 3
@@ -31,6 +32,7 @@ model:
   cond_predict_scale: false
   down_dims: [64, 128, 256]
   direction_conditioning: true
+  direction_conditioning_mode: token
   direction_num_commands: 3
   direction_latent_dim: 64
   direction_hidden_dim: 64
@@ -38,6 +40,7 @@ model:
   num_action_samples: 8
   action_noise_scale: 1.0
   action_sample_strategy: mean
+  # action_sample_strategy: cmd_dir
   # action_sample_strategy: first
   cmd_dir_theta_threshold_deg: 15.0
   action_stats:
@@ -45,6 +48,7 @@ model:
     max: [5.0, 4.0]
 
 dataset:
+  metric_waypoint_spacing: 0.065
   waypoint_spacing: 1
   cmd_dir_hold_samples_after_change: auto
 
@@ -54,35 +58,65 @@ collection:
   pose_source: amcl
   sample_dt: 0.25
   image_format: jpg
-  control_rate: 10.0
+  control_rate: 20.0
   nav_path_topic: /move_base/NavfnROS/plan
   recovery_start_distance: 0.1
   vint_resume_distance: 0.05
   angular_recovery_error: 0.8
   min_trajectory_samples: auto
 
+# training:
+#   model_name: "only_direction_v2"
+#   pretrained_weights_path: weights/nomad.pth
+#   freeze_dist_pred_net: true
+#   freeze_layers:
+#     - vision_encoder.obs_encoder
+#     - vision_encoder.goal_encoder
+#     - vision_encoder.compress_obs_enc
+#     - vision_encoder.compress_goal_enc
+#     - vision_encoder.sa_encoder
+#     - noise_pred_net
+#   use_test: false
+#   tensorboard: true
+#   epoch: [10]
+#   batch_size: 64
+#   num_workers: 4
+#   learning_rate: 0.0005
+#   layer_learning_rates: {}
+#   weight_decay: 0.0001
+#   alpha: 0.0
+#   gradient_clip: 1.0
+#   cmd_dir_loss_weighting: true
+#   cmd_dir_loss_weight_power: 1.0
+#   scheduler: warmup_cosine
+#   warmup_epochs: 2
+#   resume: ""
+
+# Stage 2: Stage 1の学習完了後、上のtrainingセクションを以下へ置き換える。
 training:
-  pretrained_weights_path: weights/nomad.pth
+  model_name: "stage_v2"
+  pretrained_weights_path: weights/nomad/nav/only_direction_v2_epoch010.pth
   freeze_dist_pred_net: true
   freeze_layers:
-    # - vision_encoder.obs_encoder
-    # - vision_encoder.goal_encoder
-    # - vision_encoder.compress_obs_enc
-    # - vision_encoder.compress_goal_enc
-    # - vision_encoder.sa_encoder
-    # - noise_pred_net
+    - vision_encoder.goal_encoder
+    - vision_encoder.compress_goal_enc
   use_test: false
   tensorboard: true
-  epochs: 10
-  epoch_sweep: [5, 10, 15, 20]
+  epoch: [10]
   batch_size: 64
   num_workers: 4
   learning_rate: 0.0001
+  layer_learning_rates:
+    vision_encoder.direction_encoder: 0.0001
+    vision_encoder.sa_encoder: 0.00005
+    vision_encoder.compress_obs_enc: 0.00005
+    noise_pred_net: 0.00005
+    vision_encoder.obs_encoder: 0.00001
   weight_decay: 0.0001
   alpha: 0.0
   gradient_clip: 1.0
-  cmd_dir_loss_weighting: false
+  cmd_dir_loss_weighting: true
   cmd_dir_loss_weight_power: 1.0
   scheduler: warmup_cosine
-  warmup_epochs: 4
+  warmup_epochs: 2
   resume: ""

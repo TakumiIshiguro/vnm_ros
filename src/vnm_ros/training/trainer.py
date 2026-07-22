@@ -9,6 +9,7 @@ from torchvision.transforms import Normalize
 from vnm_ros.training.checkpoint import save_checkpoint
 from vnm_ros.training.losses import compute_losses
 from vnm_ros.training.metrics import batch_metrics
+from vnm_ros.training.optimizer import optimizer_learning_rates
 
 CMD_DIR_NAMES = ("straight", "left", "right")
 
@@ -111,6 +112,9 @@ class Trainer:
         )
         self.best_validation_loss = float("inf")
         training_cfg = config.get("train", {}).get("training", {})
+        self.best_checkpoint_name = training_cfg.get(
+            "best_checkpoint_name", "best.pth"
+        )
         self.final_checkpoint_name = training_cfg.get("final_checkpoint_name", "")
         self.normalize = Normalize(
             mean=[0.485, 0.456, 0.406],
@@ -211,7 +215,8 @@ class Trainer:
         history_path = os.path.join(self.run_dir, "metrics.jsonl")
         try:
             for epoch in range(start_epoch, epochs):
-                learning_rate = self.optimizer.param_groups[0]["lr"]
+                learning_rates = optimizer_learning_rates(self.optimizer)
+                learning_rate = next(iter(learning_rates.values()))
                 train_metrics = self.run_epoch(train_loader, training=True)
                 validation_metrics = (
                     self.run_epoch(validation_loader, training=False)
@@ -226,6 +231,7 @@ class Trainer:
                     "train": train_metrics,
                     "validation": validation_metrics,
                     "learning_rate": learning_rate,
+                    "learning_rates": learning_rates,
                 }
                 if validation_metrics is None:
                     record.pop("validation")
@@ -240,6 +246,10 @@ class Trainer:
                         for name, value in validation_metrics.items():
                             self.writer.add_scalar(f"test/{name}", value, epoch)
                     self.writer.add_scalar("training/learning_rate", learning_rate, epoch)
+                    for group_name, group_rate in learning_rates.items():
+                        self.writer.add_scalar(
+                            f"training/learning_rate/{group_name}", group_rate, epoch
+                        )
                     self.writer.flush()
 
                 monitored_loss = (
@@ -257,9 +267,11 @@ class Trainer:
                     best_validation_loss=self.best_validation_loss,
                     config=self.config,
                 )
-                save_checkpoint(os.path.join(self.weights_dir, "latest.pth"), **common)
                 if is_best:
-                    save_checkpoint(os.path.join(self.weights_dir, "best.pth"), **common)
+                    save_checkpoint(
+                        os.path.join(self.weights_dir, self.best_checkpoint_name),
+                        **common,
+                    )
                 if epoch + 1 == epochs and self.final_checkpoint_name:
                     save_checkpoint(
                         os.path.join(self.weights_dir, self.final_checkpoint_name),

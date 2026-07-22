@@ -3,7 +3,12 @@ from typing import Optional, Sequence
 import numpy as np
 import torch
 
-from vnm_ros.datasets.dataset_utils import load_image, to_local_coords
+from vnm_ros.datasets.dataset_utils import (
+    cmd_dir_one_hot,
+    load_image,
+    majority_cmd_dir_label,
+    to_local_coords,
+)
 from vnm_ros.datasets.trajectory_dataset import TrajectoryDataset
 
 
@@ -15,7 +20,9 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         context_size: int,
         len_traj_pred: int,
         waypoint_spacing: int,
+        metric_waypoint_spacing: float,
         action_stats: dict,
+        normalize: bool = True,
         center_crop: bool = False,
         trajectory_names: Optional[Sequence[str]] = None,
     ):
@@ -23,10 +30,16 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         self.context_size = int(context_size)
         self.len_traj_pred = int(len_traj_pred)
         self.waypoint_spacing = int(waypoint_spacing)
+        self.metric_waypoint_spacing = float(metric_waypoint_spacing)
+        self.normalize = bool(normalize)
+        if self.normalize and self.metric_waypoint_spacing <= 0.0:
+            raise ValueError("metric_waypoint_spacing must be > 0 when normalize=true")
         self.action_min = np.asarray(action_stats["min"], dtype=np.float32)
         self.action_max = np.asarray(action_stats["max"], dtype=np.float32)
         self.center_crop = bool(center_crop)
         self.skipped_mixed_cmd_dir_samples = 0
+        self.skipped_tied_cmd_dir_samples = 0
+        self.relabelled_mixed_cmd_dir_samples = 0
         super().__init__(data_dir, trajectory_names=trajectory_names)
         self.samples = self._build_index()
 
@@ -38,37 +51,43 @@ class NoMaDDirectionDataset(TrajectoryDataset):
 
     def _build_index(self):
         samples = []
+        sample_labels = []
         context_offset = self.context_size * self.waypoint_spacing
         action_offset = self.len_traj_pred * self.waypoint_spacing
         for name in self.trajectory_names:
             trajectory = self.trajectory(name)
             length = len(trajectory["position"])
             for current in range(context_offset, length - action_offset):
-                if not self._cmd_dir_consistent(trajectory, current):
+                cmd_dirs = self._sample_cmd_dirs(trajectory, current)
+                label = majority_cmd_dir_label(cmd_dirs)
+                if label is None:
                     self.skipped_mixed_cmd_dir_samples += 1
+                    self.skipped_tied_cmd_dir_samples += 1
                     continue
+                window_labels = np.argmax(cmd_dirs[:, :3], axis=1)
+                valid = np.sum(cmd_dirs[:, :3], axis=1) > 0.0
+                window_labels = np.where(valid, window_labels, 0)
+                if np.any(window_labels != window_labels[0]):
+                    self.relabelled_mixed_cmd_dir_samples += 1
                 samples.append((name, current))
+                sample_labels.append(label)
         if not samples:
             raise ValueError("No trainable NoMaD samples; trajectories may be too short")
+        self._sample_cmd_dir_labels = np.asarray(sample_labels, dtype=np.int64)
         return samples
 
     def sample_cmd_dir_labels(self) -> np.ndarray:
-        labels = []
-        for name, current in self.samples:
-            cmd_dir = self.trajectory(name)["cmd_dir"][current][:3]
-            if np.sum(cmd_dir) <= 0.0:
-                labels.append(0)
-            else:
-                labels.append(int(np.argmax(cmd_dir)))
-        return np.asarray(labels, dtype=np.int64)
+        return self._sample_cmd_dir_labels.copy()
 
-    def _cmd_dir_consistent(self, trajectory: dict, current: int) -> bool:
+    def sample_cmd_dir_label(self, index: int) -> int:
+        return int(self._sample_cmd_dir_labels[index])
+
+    def sample_cmd_dir(self, index: int) -> np.ndarray:
+        return cmd_dir_one_hot(self.sample_cmd_dir_label(index))
+
+    def _sample_cmd_dirs(self, trajectory: dict, current: int) -> np.ndarray:
         indices = current + np.arange(self.len_traj_pred + 1) * self.waypoint_spacing
-        cmd_dirs = trajectory["cmd_dir"][indices, :3]
-        labels = np.argmax(cmd_dirs, axis=1)
-        valid = np.sum(cmd_dirs, axis=1) > 0.0
-        labels = np.where(valid, labels, 0)
-        return bool(np.all(labels == labels[0]))
+        return trajectory["cmd_dir"][indices, :3]
 
     def __len__(self):
         return len(self.samples)
@@ -80,8 +99,10 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         yaw = float(trajectory["yaw"][current])
         local_positions = to_local_coords(positions, positions[0], yaw)
         deltas = np.diff(local_positions, axis=0).astype(np.float32)
+        if self.normalize:
+            deltas /= self.metric_waypoint_spacing * self.waypoint_spacing
         normalized = 2.0 * (deltas - self.action_min) / (self.action_max - self.action_min)
-        return np.clip(normalized - 1.0, -1.0, 1.0).astype(np.float32)
+        return (normalized - 1.0).astype(np.float32)
 
     def __getitem__(self, index):
         name, current = self.samples[index]
@@ -98,9 +119,7 @@ class NoMaDDirectionDataset(TrajectoryDataset):
             ],
             dim=0,
         )
-        cmd_dir = trajectory["cmd_dir"][current][:3].astype(np.float32)
-        if cmd_dir.sum() <= 0:
-            cmd_dir = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        cmd_dir = self.sample_cmd_dir(index)
         return {
             "observation": observations,
             "actions": torch.from_numpy(self._normalized_action_delta(name, current)),
