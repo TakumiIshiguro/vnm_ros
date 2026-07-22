@@ -21,8 +21,8 @@ model:
   context_type: temporal
   normalize: true
   waypoint_index: 2
-  # checkpoint_path: weights/nomad/nav/epoch005.pth
-  checkpoint_path: weights/nomad/nav/stage_v2_epoch010.pth
+  checkpoint_path: weights/nomad/nav/epoch005.pth
+  # checkpoint_path: weights/nomad/nav/stage_v2_epoch010.pth
   # checkpoint_path: weights/nomad.pth
   encoding_size: 256
   context_size: 3
