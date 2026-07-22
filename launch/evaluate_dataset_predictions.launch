@@ -1,0 +1,7 @@
+<launch>
+  <arg name="config_dir" default="$(find vnm_ros)/config"/>
+
+  <node pkg="vnm_ros" type="evaluate_dataset_predictions.py"
+        name="vnm_evaluate_dataset_predictions" output="screen"
+        args="--config-dir $(arg config_dir)"/>
+</launch>

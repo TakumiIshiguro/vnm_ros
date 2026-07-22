@@ -29,3 +29,16 @@ visualization:
   overlay:
     rate: 10.0
     image_size: [480, 480]
+  evaluation:
+    dataset_type: train
+    trajectory_name: ""
+    sample_indices: []
+    # sample_indices: [11, 307, 1323, 1612]
+    output_dir: auto
+    samples_per_direction: 100
+    include_augmented: false
+    compare_all_commands: true
+    strategy: configured
+    sample_seed: 0
+    seed: 0
+    preview_image_height: 160
