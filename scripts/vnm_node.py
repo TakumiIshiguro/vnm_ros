@@ -25,6 +25,21 @@ from vnm_ros.utils.image_utils import pil_to_msg
 from vnm_ros.utils.logger import info
 
 
+def optional_bool(value, name):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in ("", "auto", "default"):
+        return None
+    if normalized in ("true", "1", "yes", "on"):
+        return True
+    if normalized in ("false", "0", "no", "off"):
+        return False
+    raise ValueError(f"{name} must be true, false, or auto: {value}")
+
+
 def cmd_dir_name(cmd_dir):
     if cmd_dir is None or len(cmd_dir) < 3:
         return "none"
@@ -34,16 +49,74 @@ def cmd_dir_name(cmd_dir):
     return ["straight", "left", "right"][int(np.argmax(cmd_dir))]
 
 
+def delete_waypoint_marker(frame_id):
+    marker = Marker()
+    marker.header.frame_id = frame_id
+    marker.header.stamp = rospy.Time.now()
+    marker.ns = "vnm_waypoint"
+    marker.id = 0
+    marker.action = Marker.DELETE
+    return marker
+
+
 def main():
     rospy.init_node("vnm_node")
     config_dir = rospy.get_param("~config_dir", None)
     cfg = load_runtime_config(config_dir)
     topics = cfg["topics"]
-    robot = cfg["robot"]
-    model_cfg = cfg["model"]
+    robot = dict(cfg["robot"])
+    model_cfg = dict(cfg["model"])
     topomap_cfg = cfg["topomap"]
 
-    checkpoint = model_cfg["checkpoint_path"]
+    use_pretrained_weights = optional_bool(
+        rospy.get_param("~use_pretrained_weights", False),
+        "use_pretrained_weights",
+    )
+    use_pretrained_weights = bool(use_pretrained_weights)
+    checkpoint_override = str(
+        rospy.get_param("~checkpoint_path_override", "")
+    ).strip()
+    if checkpoint_override:
+        checkpoint = checkpoint_override
+    elif use_pretrained_weights:
+        checkpoint = str(
+            cfg["train"].get("training", {}).get("pretrained_weights_path", "")
+        ).strip()
+        if not checkpoint:
+            raise ValueError(
+                "use_pretrained_weights=true requires "
+                "training.pretrained_weights_path"
+            )
+    else:
+        checkpoint = model_cfg["checkpoint_path"]
+    model_cfg["checkpoint_path"] = checkpoint
+
+    publish_cmd_vel_override = optional_bool(
+        rospy.get_param("~publish_cmd_vel_override", "auto"),
+        "publish_cmd_vel_override",
+    )
+    if publish_cmd_vel_override is not None:
+        robot["publish_cmd_vel"] = publish_cmd_vel_override
+
+    direction_conditioning_override = optional_bool(
+        rospy.get_param("~direction_conditioning_override", "auto"),
+        "direction_conditioning_override",
+    )
+    if direction_conditioning_override is not None:
+        model_cfg["direction_conditioning"] = direction_conditioning_override
+
+    navigation_mode_override = str(
+        rospy.get_param("~navigation_mode_override", "")
+    ).strip()
+    if navigation_mode_override:
+        robot["navigation_mode"] = navigation_mode_override
+
+    action_sample_strategy_override = str(
+        rospy.get_param("~action_sample_strategy_override", "")
+    ).strip()
+    if action_sample_strategy_override:
+        model_cfg["action_sample_strategy"] = action_sample_strategy_override
+
     checkpoint = resolve_path(checkpoint, package_root())
     model = VNMModel(model_cfg, checkpoint)
     navigation_mode = robot.get("navigation_mode", "topomap")
@@ -78,12 +151,6 @@ def main():
         )
 
     image_sub = ImageContextSubscriber(topics["image_topic"], model.context_size)
-    rospy.Subscriber(
-        topics.get("reset_context_topic", "/vnm/reset_context"),
-        Bool,
-        lambda msg: image_sub.reset() if msg.data else None,
-        queue_size=1,
-    )
     action_selector = CmdDirActionSelector(
         theta_threshold_deg=float(model_cfg.get("cmd_dir_theta_threshold_deg", 15.0))
     )
@@ -113,10 +180,34 @@ def main():
         max_w=float(robot["max_w"]),
     )
 
+    def reset_context_callback(msg):
+        if not msg.data:
+            return
+        image_sub.reset()
+        waypoint_pub.publish(waypoint_msg([]))
+        action_candidates_pub.publish(action_candidates_msg([], selected_sample=-1, waypoint_index=0))
+        marker_pub.publish(delete_waypoint_marker(topics["frame_id"]))
+        cmd_debug_pub.publish(Twist())
+        reached_pub.publish(Bool(data=False))
+        if robot.get("publish_cmd_vel", True):
+            cmd_pub.stop()
+        info("reset VNM context and local path outputs")
+
+    rospy.Subscriber(
+        topics.get("reset_context_topic", "/vnm/reset_context"),
+        Bool,
+        reset_context_callback,
+        queue_size=1,
+    )
+
     rate = rospy.Rate(float(robot["model_rate"]))
     waypoint_index = int(model_cfg["waypoint_index"])
     info(f"loaded {model_cfg['model_type']} from {checkpoint}")
     info(f"navigation_mode={navigation_mode}")
+    info(
+        f"runtime publish_cmd_vel={bool(robot.get('publish_cmd_vel', True))} "
+        f"use_pretrained_weights={use_pretrained_weights}"
+    )
     if navigation_mode == "explore":
         info(f"action_sample_strategy={action_sample_strategy}")
         if use_cmd_dir_input:

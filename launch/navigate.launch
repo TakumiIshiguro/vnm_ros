@@ -1,5 +1,19 @@
 <launch>
+  <arg name="config_dir" default="$(find vnm_ros)/config"/>
+  <arg name="use_pretrained_weights" default="false"/>
+  <arg name="checkpoint_path_override" default=""/>
+  <arg name="publish_cmd_vel_override" default="auto"/>
+  <arg name="navigation_mode_override" default=""/>
+  <arg name="direction_conditioning_override" default="auto"/>
+  <arg name="action_sample_strategy_override" default=""/>
+
   <node pkg="vnm_ros" type="vnm_node.py" name="vnm_node" output="screen">
-    <param name="config_dir" value="$(find vnm_ros)/config"/>
+    <param name="config_dir" value="$(arg config_dir)"/>
+    <param name="use_pretrained_weights" value="$(arg use_pretrained_weights)"/>
+    <param name="checkpoint_path_override" value="$(arg checkpoint_path_override)"/>
+    <param name="publish_cmd_vel_override" value="$(arg publish_cmd_vel_override)"/>
+    <param name="navigation_mode_override" value="$(arg navigation_mode_override)"/>
+    <param name="direction_conditioning_override" value="$(arg direction_conditioning_override)"/>
+    <param name="action_sample_strategy_override" value="$(arg action_sample_strategy_override)"/>
   </node>
 </launch>

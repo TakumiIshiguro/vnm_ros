@@ -1,9 +1,25 @@
 <launch>
-  <include file="$(find vnm_ros)/launch/navigate.launch"/>
+  <arg name="config_dir" default="$(find vnm_ros)/config"/>
+  <arg name="use_pretrained_weights" default="false"/>
+  <arg name="checkpoint_path_override" default=""/>
+  <arg name="publish_cmd_vel_override" default="auto"/>
+  <arg name="navigation_mode_override" default=""/>
+  <arg name="direction_conditioning_override" default="auto"/>
+  <arg name="action_sample_strategy_override" default=""/>
+
+  <include file="$(find vnm_ros)/launch/navigate.launch">
+    <arg name="config_dir" value="$(arg config_dir)"/>
+    <arg name="use_pretrained_weights" value="$(arg use_pretrained_weights)"/>
+    <arg name="checkpoint_path_override" value="$(arg checkpoint_path_override)"/>
+    <arg name="publish_cmd_vel_override" value="$(arg publish_cmd_vel_override)"/>
+    <arg name="navigation_mode_override" value="$(arg navigation_mode_override)"/>
+    <arg name="direction_conditioning_override" value="$(arg direction_conditioning_override)"/>
+    <arg name="action_sample_strategy_override" value="$(arg action_sample_strategy_override)"/>
+  </include>
 
   <node pkg="vnm_ros" type="overlay_view.py"
         name="vnm_overlay_view" output="screen">
-    <param name="config_dir" value="$(find vnm_ros)/config"/>
+    <param name="config_dir" value="$(arg config_dir)"/>
   </node>
 
   <node pkg="image_view" type="image_view"
