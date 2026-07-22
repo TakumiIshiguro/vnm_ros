@@ -148,6 +148,37 @@ sample previews under `plots/dataset/<dataset>/<model_type>/<train|test>/`.
 Trajectory plots include a 1 m world-coordinate grid by default; override it
 with `grid_spacing_m:=0.5` or disable it with `grid_spacing_m:=0`.
 
+Create horizontal-flip augmentation for the selected training dataset:
+
+```bash
+rosrun vnm_ros augment_dataset_horizontal_flip.py
+```
+
+The command writes mirrored trajectories under
+`<train_data_dir>/<model_type>/aug/`. It flips every image, mirrors trajectory
+positions and yaw, and swaps the left/right command labels. Training discovers
+nested trajectory directories, so the original and augmented trajectories are
+loaded together. The command refuses to overwrite an existing `aug/` directory.
+
+Compare predictions from dataset context images with their teacher trajectories:
+
+```bash
+roslaunch vnm_ros evaluate_dataset_predictions.launch
+```
+
+Each preview shows the context images, the teacher trajectory, every model
+candidate, and the candidate selected by the configured action strategy in the
+same robot coordinate frame. Per-sample ADE/FDE values are written to
+`metrics.csv`, with direction summaries in `summary.csv`, under
+`plots/evaluation/<dataset>/<model>/<checkpoint>/<train|test>/`. Augmented
+trajectories are excluded by default; set `include_augmented:=true` to evaluate
+them too in `runtime.yaml` under `visualization.evaluation`.
+
+With `visualization.evaluation.compare_all_commands: true`, each preview uses
+the same context and diffusion noise for straight, left, and right, then overlays
+the three selected trajectories. Set `sample_indices` to the sample numbers of
+the junction images to restrict the comparison to those observations.
+
 ## Training
 
 ```bash
@@ -181,21 +212,27 @@ rosrun vnm_ros train.py \
 
 When test evaluation is disabled, `best.pth` is selected using the training loss.
 
-Checkpoints are written under `weights/<model_type>/`. Every epoch is saved with
-the training parameters in the filename, while `latest.pth` and `best.pth` are
-also updated so the navigation launch files can use them immediately:
+Checkpoints are grouped by dataset under
+`weights/<model_type>/<dataset_name>/`. `best.pth` is updated when the monitored
+loss improves, and an epoch sweep also writes its final `epochXXX.pth`
+checkpoint. Set `training.model_name` to add a prefix to both checkpoint names:
 
 ```text
-weights/nomad/nomad_lr0p0001_bs64_ep10_schedwarmup_cosine_warm4_alpha0p0_wd0p0001_cmdw0_cmdwp1p0_distfreeze1_freezenone_epoch000.pth
-weights/nomad/latest.pth
-weights/nomad/best.pth
+weights/nomad/mix_0.8/epoch010.pth
+weights/nomad/mix_0.8/best.pth
+weights/nomad/mix_0.8/encoder_lr_epoch010.pth
+weights/nomad/mix_0.8/encoder_lr_best.pth
 ```
 
-Metrics and TensorBoard logs are written to:
+Each checkpoint has a same-name YAML file containing the effective model,
+dataset, and training configuration. Metrics, TensorBoard logs, and another
+copy of the configuration are written to:
 
 ```text
-runs/20260611_153000_123456/metrics.jsonl
-runs/20260611_153000_123456/tensorboard/
+weights/nomad/mix_0.8/epoch010.yaml
+runs/nomad/mix_0.8/20260611_153000_123456_ep010/training_config.yaml
+runs/nomad/mix_0.8/20260611_153000_123456_ep010/metrics.jsonl
+runs/nomad/mix_0.8/20260611_153000_123456_ep010/tensorboard/
 ```
 
 Start TensorBoard while training or after training:

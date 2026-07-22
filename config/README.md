@@ -91,11 +91,12 @@ NoMaD専用、またはNoMaD checkpointに合わせる設定です。
 | `context_size` | 現在画像より前に使う画像枚数です。 |
 | `image_size` | モデル入力画像の `[幅, 高さ]` です。 |
 | `len_traj_pred` | モデルが予測する将来Waypoint数です。 |
-| `normalize` | NoMaDでは通常 `false` です。NoMaD出力は `action_stats` で正規化解除されるため、`true` にすると追加で `max_v / model_rate` 倍されて低速になります。 |
+| `normalize` | NoMaD公式checkpointと同じactionスケールを使う場合は `true` にします。学習時はDatasetのstep距離で正規化し、推論時は正規化解除後のWaypointを `max_v / model_rate` 倍してメートルへ戻します。 |
 | `learn_angle` | NoMaDでは通常 `false` です。 |
 | `down_dims` | NoMaD diffusion U-Netの各段の次元数です。 |
 | `cond_predict_scale` | NoMaD diffusion U-Netで条件付きscale予測を使うかを指定します。 |
 | `direction_conditioning` | `true` の場合、`cmd_dir` のラベルindexから学習可能なlatent `z_i` を選び、MLPでTransformer入力用の方向tokenへ変換します。従来のgoal token位置に入り、token列は `obs tokens + direction token` になります。 |
+| `direction_conditioning_mode` | NoMaDでは `token` を指定します。`residual` 方式のcheckpointとは互換性がありません。 |
 | `direction_num_commands` | 方向コマンド数です。通常はstraight/left/rightの3です。 |
 | `direction_latent_dim` | コマンドごとの学習可能latent `z_i` の次元数です。 |
 | `direction_hidden_dim` | `z_i` から方向tokenを作るMLPの隠れ層次元数です。 |
@@ -110,6 +111,9 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 `diffusion_policy` とその依存パッケージが必要です。`scripts/train.py` は
 `direction_conditioning: true` のNoMaDに対して、収録済み `cmd_dir` ラベルを
 使ったdiffusion fine-tuningに対応しています。
+`normalize: false` で学習した旧checkpointは公式スケールの
+`normalize: true` と互換ではありません。保存済み設定が異なるcheckpointは
+学習再開・推論時にエラーにし、意図しない距離スケールでの実行を防ぎます。
 
 ## topics.yaml
 
@@ -173,6 +177,21 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 | `dataset.loop` | `true` の場合、最後まで再生したあと先頭へ戻ります。 |
 | `overlay.rate` | カメラ画像へSubgoal画像、NoMaD Action候補を重ねる周期 `[Hz]` です。 |
 | `overlay.image_size` | 可視化用にpublishするカメラ画像サイズ `[幅, 高さ]` です。モデル入力サイズには影響しません。 |
+| `evaluation.dataset_type` | 教師軌跡とモデル予測を比較するDatasetの種類です。 |
+| `evaluation.trajectory_name` | 評価対象の軌跡名です。空文字の場合はDataset全体からサンプルを選びます。 |
+| `evaluation.sample_indices` | 評価するDataset sample indexのリストです。空リストの場合は方向ごとにランダム選択します。分岐の比較では対象画像に表示されたsample番号を指定します。 |
+| `evaluation.output_dir` | 評価画像の出力先です。`auto` の場合はDataset、モデル、checkpoint名から決定します。 |
+| `evaluation.samples_per_direction` | straight/left/rightごとに評価するサンプル数です。`-1`で全件を評価します。 |
+| `evaluation.include_augmented` | `true` の場合は左右反転augmentationも評価対象に含めます。 |
+| `evaluation.compare_all_commands` | `true` の場合、同一contextと同一diffusion乱数へstraight/left/rightを入力し、選択軌跡を1枚に重ねます。 |
+| `evaluation.strategy` | 予測候補の選択方法です。`configured` はモデルの `action_sample_strategy` を使用します。 |
+| `evaluation.sample_seed` | 方向ごとの評価サンプルをランダム選択するときのseedです。同じ値なら同じサンプルを選びます。 |
+| `evaluation.seed` | diffusion予測の乱数seedです。 |
+| `evaluation.preview_image_height` | 評価画像に並べるcontext画像の高さ `[px]` です。 |
+
+`compare_all_commands: true` のとき、教師と異なる方向を入力した行のADE/FDEは
+教師に対する正解率ではなく、コマンド変更による軌跡差の参考値です。
+`metrics.csv` の `teacher_command_match` が `true` の行だけが通常の教師比較です。
 
 ## dataset / collection / training
 
@@ -212,6 +231,7 @@ distance labelは予測する行動系列の終端までのtemporal distanceと�
 
 | パラメータ | 意味 |
 | --- | --- |
+| `metric_waypoint_spacing` | 連続する収録画像間の平均移動距離 `[m]` です。`normalize: true` の場合、教師Action差分を `metric_waypoint_spacing * waypoint_spacing` で除算してから公式NoMaDの `action_stats` へ写します。 |
 | `waypoint_spacing` | NoMaD方向fine-tuningで、行動系列を何フレームおきに取り出すかを指定します。`image_size`、`context_size`、`len_traj_pred` は `nomad.yaml` の `model` を使います。 |
 | `cmd_dir_hold_samples_after_change` | オンライン収集で `cmd_dir` が切り替わったあと、このサンプル数だけ切替前のラベルを保持して `traj_data.pkl` へ保存します。`auto` の場合、選択中モデルの `len_traj_pred * waypoint_spacing` から自動計算します。手動値が必要値より小さい場合も必要値まで引き上げます。 |
 
@@ -245,6 +265,29 @@ NoMaD用に `96x96` で作成したDatasetをViNTの `85x64` 学習へ流用す�
 Datasetを作成してください。
 Datasetは `train_data_dir` または `test_data_dir` を基準ディレクトリとして、
 `vint/<trajectory_name>`、`nomad/<trajectory_name>` の形で保存されます。
+選択中のtrain Datasetへ左右反転augmentationを追加する場合は、次を実行します。
+
+```bash
+rosrun vnm_ros augment_dataset_horizontal_flip.py
+```
+
+出力先は `<train_data_dir>/<model_type>/aug/<trajectory_name>/` です。
+画像を水平反転し、軌跡座標とyawを鏡映して、`cmd_dir` のleft/rightを交換します。
+学習時はサブディレクトリも再帰的に探索するため、元データと `aug/` が同時に使われます。
+既存の `aug/` は上書きしないため、作り直す場合は既存ディレクトリを確認してから削除します。
+
+Datasetのcontext画像から得たモデル予測と教師軌跡を比較する場合は、次を実行します。
+
+```bash
+roslaunch vnm_ros evaluate_dataset_predictions.launch
+```
+
+各画像では、教師軌跡を緑と黒、全予測候補を薄青、実行時の
+`action_sample_strategy` で選択される予測を赤で、同じロボット座標系へ描画します。
+ADE、FDE、終点角度誤差は `metrics.csv`、方向別平均は `summary.csv` に保存します。
+出力先は `plots/evaluation/<dataset>/<model>/<checkpoint>/<train|test>/` です。
+評価条件は `runtime.yaml` の `visualization.evaluation`、checkpointは選択中モデルの
+`model.checkpoint_path` から読み込みます。デフォルトでは `aug/` を除外します。
 
 Dataset作成時に `cmd_dir_topic` がbagに含まれている場合、各保存サンプルへ
 最新の `cmd_dir` one-hotラベルも保存します。方向fine-tuningではこの
@@ -257,6 +300,14 @@ nav recovery付きのオンライン収集は以下で実行します。
 roslaunch vnm_ros collect_dataset_nav_recovery.launch
 ```
 
+このlaunchは収集専用設定として、選択中モデル設定の
+`training.pretrained_weights_path` を推論checkpointに使用し、
+`robot.navigation_mode: explore`、`robot.publish_cmd_vel: false` を自動適用します。
+公式事前学習checkpointには方向encoderが含まれないため、
+`direction_conditioning: false` と `action_sample_strategy: cmd_dir` も適用し、
+複数の生成軌跡から `cmd_dir` に合う候補を選択します。通常の
+`navigate.launch` とYAMLファイル自体は変更しません。
+
 この収集スクリプトは通常時に `/vnm/cmd_vel_debug`、復帰時に `/nav_vel` を
 選んで `/cmd_vel` へpublishします。nav recoveryへの切替は、経路からの距離、または
 navとVNM/NoMaDの角速度差で判定します。`recovery_start_distance` 以上、または
@@ -267,6 +318,19 @@ VNM/NoMaD走行中の区間は保存せず、nav recoveryが終わった時点�
 保存して閉じます。`min_trajectory_samples` 未満の短すぎるrecoveryは学習サンプルを
 作れないため破棄します。重複publishを避けるため、収集中はVNM本体の直接 `/cmd_vel`
 publishを止め、debug topicだけを使う構成にしてください。
+
+方向fine-tuning済みの `model.checkpoint_path` を使って収集する場合は、次のように
+事前学習checkpointへの切替を止め、方向条件付けを有効にします。
+
+```bash
+roslaunch vnm_ros collect_dataset_nav_recovery.launch \
+  use_pretrained_weights:=false \
+  direction_conditioning_override:=true \
+  action_sample_strategy_override:=mean
+```
+
+任意のcheckpointを使う場合は
+`checkpoint_path_override:=weights/nomad/example.pth` を追加します。
 
 収集後の `traj_data.pkl` はCSVへ変換できます。
 
@@ -283,12 +347,22 @@ roslaunch vnm_ros plot_dataset_trajectories.launch dataset_type:=train
 出力先はデフォルトでDatasetディレクトリ名を使った
 `vnm_ros/plots/dataset/<dataset>/<model_type>/<train|test>/` です。
 `overview.png` に全軌跡、`trajectories/` に各軌跡ごとの画像を保存します。
+方向conditioned Datasetでは、学習Datasetが保持するsampleの現在位置だけを描画します。
+現在点を含む予測区間の `len_traj_pred + 1` 点で `cmd_dir` が混ざるsampleは、
+最も多い方向をそのsampleの目標方向にします。
+最多方向が同数のsampleだけを学習と表示から除外します。
 軌跡画像にはデフォルトで1m間隔のworld座標グリッドを描画します。
 間隔は `grid_spacing_m` で変更でき、0以下にすると非表示です。
 方向conditioned Datasetの場合は `training_samples/` に実際に学習に使う
 context画像列と教師軌跡も保存します。
 `training_samples_per_direction` でstraight/left/rightそれぞれ何枚保存するかを
 指定できます。`-1` なら各方向の学習サンプルを全件保存し、`0` なら保存しません。
+目標方向と教師軌跡の向きが逆のサンプルは `opposite_direction_samples/` に保存します。
+教師軌跡をロボット座標系へ変換し、終点角度が目標方向と反対側に
+`opposite_direction_threshold_deg` 度以上あるものを対象とします。
+`opposite_direction_samples_per_direction` はleft/rightそれぞれの画像保存数で、
+`-1` なら全件、`0` なら画像保存を無効化します。該当サンプルの一覧は
+画像保存数にかかわらず `opposite_direction_samples/samples.csv` に保存します。
 
 ### training
 
@@ -297,16 +371,17 @@ context画像列と教師軌跡も保存します。
 
 | パラメータ | 意味 |
 | --- | --- |
+| `model_name` | 学習済みcheckpointの名前です。例えば `encoder_lr` なら `encoder_lr_best.pth` と `encoder_lr_epoch005.pth` のように保存します。空文字なら従来の `best.pth`、`epoch005.pth` です。使用可能文字は英数字、`_`、`-`、`.` です。 |
 | `pretrained_weights_path` | 新規学習時に初期重みとして読み込む事前学習済みモデルです。空文字の場合は初期重みを読み込みません。 |
 | `freeze_dist_pred_net` | NoMaDで `true` の場合、距離予測headを固定します。 |
 | `freeze_layers` | 固定するmodule名またはparameter prefixのリストです。`model.named_modules()` の名前を指定します。例: `vision_encoder.obs_encoder`、`vision_encoder.sa_encoder.layers.0`、`noise_pred_net`、`obs_encoder._blocks.0`。 |
 | `use_test` | `true` の場合、各epochでtest Datasetを評価します。 |
 | `tensorboard` | TensorBoardログを保存するかを指定します。 |
-| `epochs` | 学習する総epoch数です。 |
-| `epoch_sweep` | 複数の総epoch数を比較するためのリストです。例: `[5, 10, 20]` なら、それぞれ同じ初期重み・同じseedから独立に学習し直します。空リストなら `epochs` で1回だけ学習します。`resume` とは併用できません。 |
+| `epoch` | 学習する総epoch数のリストです。`[5]` なら5 epochの学習を1回、`[5, 10, 20]` なら各値について同じ初期重み・同じseedから独立に学習します。`resume` は値が1つの場合だけ使用できます。 |
 | `batch_size` | 1回の更新で使用するサンプル数です。 |
 | `num_workers` | PyTorch DataLoaderの並列読込プロセス数です。 |
 | `learning_rate` | AdamW Optimizerの初期学習率です。 |
+| `layer_learning_rates` | module名またはparameter prefixごとの学習率です。未指定の層は `learning_rate` を使います。複数のprefixに一致する場合は最も具体的な長いprefixを優先します。NoMaDの例: `{vision_encoder.direction_encoder: 0.0001, vision_encoder.sa_encoder: 0.00002, noise_pred_net: 0.00002, vision_encoder.obs_encoder: 0.00001}`。 |
 | `weight_decay` | AdamWのweight decay係数です。 |
 | `alpha` | 距離lossとAction lossの重みです。総lossは `alpha * 1e-2 * distance_loss + (1 - alpha) * action_loss` です。 |
 | `gradient_clip` | 勾配ノルムの最大値です。0以下にするとクリッピングしません。 |
@@ -334,11 +409,22 @@ rosrun vnm_ros train.py --config-dir $(rospack find vnm_ros)/config --list-freez
 方向conditioned Datasetで学習する場合、TensorBoardには全体lossに加えて
 `train/direction/<straight|left|right>/...` と
 `test/direction/<straight|left|right>/...` の方向別lossも記録します。
-学習結果はアーキテクチャごとに `runs/<model_type>/<run_name>/` と
-`weights/<model_type>/` へ保存されます。checkpointは各epochで
-`latest.pth` を更新し、監視lossが改善した場合だけ `best.pth` も更新します。
-`epoch_sweep` を指定した場合は、各epoch数ごとに独立したrunを作り、その最終epochの
-checkpointも `epochXXX.pth` として保存します。
-例えばViNTは `weights/vint/best.pth`、NoMaDは `weights/nomad/best.pth` が
-best checkpointです。
+学習結果はアーキテクチャとDatasetごとに
+`runs/<model_type>/<dataset_name>/<run_name>/` と
+`weights/<model_type>/<dataset_name>/` へ保存されます。NoMaDは学習中にEMAを更新し、
+checkpointの `state_dict` には推論用EMA重み、`model_state_dict` にはresume用の
+生モデル重みを保存します。checkpointは各epochで
+監視lossが改善した場合だけ `best.pth` を更新します。`use_test: true` ならtest loss、
+`false`ならtrain lossを監視します。`latest.pth` は保存しません。
+`epoch` の各値について独立したrunを作り、その最終epochのcheckpointも
+`epochXXX.pth` として保存します。
+`model_name` を指定した場合は、`<model_name>_best.pth` と
+`<model_name>_epochXXX.pth` になります。
+各checkpointと同名のYAMLへ実際に使用したモデル・Dataset・学習設定を保存し、
+runディレクトリにも `training_config.yaml` を保存します。
+例えばDataset名が `mix_0.8` のNoMaDなら
+`weights/nomad/mix_0.8/best.pth` と `best.yaml` が生成されます。
 学習再開時は `resume` が優先され、`pretrained_weights_path` は読み込みません。
+`resume` ではcheckpoint作成時と同じ `freeze_layers`、`freeze_dist_pred_net`、
+`layer_learning_rates` を指定してください。これらを変更して追加学習する場合は、
+対象checkpointを `pretrained_weights_path` に指定してOptimizerを作り直します。
