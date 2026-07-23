@@ -61,6 +61,48 @@ class NoMaDPretrainingTest(unittest.TestCase):
 
         torch.testing.assert_close(first, second, atol=1e-5, rtol=1e-5)
 
+    def test_residual_mode_preserves_pretrained_goal_masked_condition(self):
+        torch.manual_seed(0)
+        pretrained = NoMaDViNT(
+            context_size=1,
+            obs_encoding_size=32,
+            mha_num_attention_heads=4,
+            mha_num_attention_layers=1,
+        ).eval()
+        conditioned = NoMaDViNT(
+            context_size=1,
+            obs_encoding_size=32,
+            mha_num_attention_heads=4,
+            mha_num_attention_layers=1,
+            direction_encoder=DirectionEncoder(
+                embedding_dim=32,
+                hidden_dim=8,
+                latent_dim=4,
+                zero_init_output=True,
+            ),
+            direction_conditioning_mode="residual",
+        ).eval()
+        conditioned.load_state_dict(pretrained.state_dict(), strict=False)
+        observation = torch.randn(2, 6, 32, 32)
+        goal = torch.randn(2, 3, 32, 32)
+        goal_mask = torch.ones(2, dtype=torch.long)
+        commands = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
+        with torch.no_grad():
+            expected = pretrained(
+                observation,
+                goal,
+                input_goal_mask=goal_mask,
+            )
+            actual = conditioned(
+                observation,
+                goal,
+                input_goal_mask=goal_mask,
+                cmd_dir=commands,
+            )
+
+        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
     def test_checkpoint_uses_ema_for_inference_and_raw_model_for_resume(self):
         model = torch.nn.Linear(2, 1, bias=False)
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)

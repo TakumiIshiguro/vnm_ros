@@ -136,15 +136,18 @@ def _build_vint(config: Dict):
 def _build_nomad(config: Dict):
     encoding_size = int(config.get("encoding_size", config.get("obs_encoding_size", 256)))
     direction_encoder = None
+    direction_mode = str(config.get("direction_conditioning_mode", "token"))
     if bool(config.get("direction_conditioning", False)):
-        direction_mode = str(config.get("direction_conditioning_mode", "token"))
-        if direction_mode != "token":
-            raise ValueError("NoMaD only supports direction_conditioning_mode: token")
+        if direction_mode not in ("token", "residual"):
+            raise ValueError(
+                "NoMaD direction_conditioning_mode must be token or residual"
+            )
         direction_encoder = DirectionEncoder(
             embedding_dim=encoding_size,
             input_dim=int(config.get("direction_num_commands", 3)),
             hidden_dim=int(config.get("direction_hidden_dim", 64)),
             latent_dim=int(config.get("direction_latent_dim", 64)),
+            zero_init_output=direction_mode == "residual",
         )
     vision_encoder = NoMaDViNT(
         context_size=int(config["context_size"]),
@@ -154,6 +157,7 @@ def _build_nomad(config: Dict):
         mha_num_attention_layers=int(config["mha_num_attention_layers"]),
         mha_ff_dim_factor=int(config["mha_ff_dim_factor"]),
         direction_encoder=direction_encoder,
+        direction_conditioning_mode=direction_mode,
     )
     noise_pred_net = build_conditional_unet1d(
         input_dim=2,

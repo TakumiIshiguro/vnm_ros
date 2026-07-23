@@ -95,8 +95,8 @@ NoMaD専用、またはNoMaD checkpointに合わせる設定です。
 | `learn_angle` | NoMaDでは通常 `false` です。 |
 | `down_dims` | NoMaD diffusion U-Netの各段の次元数です。 |
 | `cond_predict_scale` | NoMaD diffusion U-Netで条件付きscale予測を使うかを指定します。 |
-| `direction_conditioning` | `true` の場合、`cmd_dir` のラベルindexから学習可能なlatent `z_i` を選び、MLPでTransformer入力用の方向tokenへ変換します。従来のgoal token位置に入り、token列は `obs tokens + direction token` になります。 |
-| `direction_conditioning_mode` | NoMaDでは `token` を指定します。`residual` 方式のcheckpointとは互換性がありません。 |
+| `direction_conditioning` | `true` の場合、`cmd_dir` のラベルindexから学習可能なlatent `z_i` を選び、MLPで方向条件ベクトルへ変換します。 |
+| `direction_conditioning_mode` | `residual`では公式NoMaDのgoal-masked条件ベクトルへ方向条件を加算します。`token`は方向条件をgoal token位置へ入れる旧方式です。両方式のcheckpointに互換性はありません。 |
 | `direction_num_commands` | 方向コマンド数です。通常はstraight/left/rightの3です。 |
 | `direction_latent_dim` | コマンドごとの学習可能latent `z_i` の次元数です。 |
 | `direction_hidden_dim` | `z_i` から方向tokenを作るMLPの隠れ層次元数です。 |
@@ -111,6 +111,9 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 `diffusion_policy` とその依存パッケージが必要です。`scripts/train.py` は
 `direction_conditioning: true` のNoMaDに対して、収録済み `cmd_dir` ラベルを
 使ったdiffusion fine-tuningに対応しています。
+`residual`方式の方向encoderは出力層をゼロ初期化するため、公式事前学習重みを
+読み込んだ直後はgoal-masked NoMaDと同じ条件表現になります。方向encoderの学習に
+よって、その条件表現へstraight/left/rightごとの補正が加わります。
 `normalize: false` で学習した旧checkpointは公式スケールの
 `normalize: true` と互換ではありません。保存済み設定が異なるcheckpointは
 学習再開・推論時にエラーにし、意図しない距離スケールでの実行を防ぎます。

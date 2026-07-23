@@ -82,13 +82,13 @@ class NoMaDActionScalingTest(unittest.TestCase):
             "nomad.pth",
         )
 
-    def test_rejects_residual_direction_checkpoint(self):
+    def test_rejects_token_direction_checkpoint_for_residual_model(self):
         checkpoint = {
             "config": {
                 "model": {
                     "normalize": True,
                     "direction_conditioning": True,
-                    "direction_conditioning_mode": "residual",
+                    "direction_conditioning_mode": "token",
                 }
             }
         }
@@ -96,11 +96,11 @@ class NoMaDActionScalingTest(unittest.TestCase):
             "model_type": "nomad",
             "normalize": True,
             "direction_conditioning": True,
-            "direction_conditioning_mode": "token",
+            "direction_conditioning_mode": "residual",
         }
 
         with self.assertRaisesRegex(ValueError, "direction conditioning mismatch"):
-            validate_checkpoint_action_scale(checkpoint, config, "residual.pth")
+            validate_checkpoint_action_scale(checkpoint, config, "token.pth")
 
 
 if __name__ == "__main__":

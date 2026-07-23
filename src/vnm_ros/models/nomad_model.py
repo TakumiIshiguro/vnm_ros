@@ -68,6 +68,7 @@ class DirectionEncoder(nn.Module):
         input_dim: int = 3,
         hidden_dim: int = 64,
         latent_dim: int = 64,
+        zero_init_output: bool = False,
     ):
         super().__init__()
         self.num_commands = input_dim
@@ -77,6 +78,9 @@ class DirectionEncoder(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, embedding_dim),
         )
+        if zero_init_output:
+            nn.init.zeros_(self.projector[-1].weight)
+            nn.init.zeros_(self.projector[-1].bias)
 
     def forward(self, cmd_dir):
         if cmd_dir.ndim == 2 and cmd_dir.shape[-1] > 1:
@@ -98,12 +102,21 @@ class NoMaDViNT(nn.Module):
         mha_num_attention_layers: Optional[int] = 4,
         mha_ff_dim_factor: Optional[int] = 4,
         direction_encoder: Optional[nn.Module] = None,
+        direction_conditioning_mode: str = "token",
     ) -> None:
         super().__init__()
         self.obs_encoding_size = obs_encoding_size
         self.goal_encoding_size = obs_encoding_size
         self.context_size = context_size
         self.direction_encoder = direction_encoder
+        self.direction_conditioning_mode = str(direction_conditioning_mode)
+        if self.direction_encoder is not None and self.direction_conditioning_mode not in (
+            "token",
+            "residual",
+        ):
+            raise ValueError(
+                "direction_conditioning_mode must be 'token' or 'residual'"
+            )
 
         if obs_encoder.split("-")[0] != "efficientnet":
             raise NotImplementedError(
@@ -189,9 +202,19 @@ class NoMaDViNT(nn.Module):
         )
         obs_encoding = torch.transpose(obs_encoding, 0, 1)
 
+        direction_encoding = None
         if self.direction_encoder is not None:
-            goal_encoding = self._direction_token(obs_encoding, cmd_dir)
-            input_goal_mask = None
+            direction_encoding = self._direction_token(obs_encoding, cmd_dir)
+            if self.direction_conditioning_mode == "token":
+                goal_encoding = direction_encoding
+                input_goal_mask = None
+            else:
+                # Preserve the official goal-masked NoMaD condition before
+                # adding the command-dependent residual after the transformer.
+                goal_encoding = torch.zeros_like(obs_encoding[:, :1, :])
+                input_goal_mask = torch.ones(
+                    obs_encoding.shape[0], dtype=torch.long, device=device
+                )
         else:
             obsgoal_img = torch.cat([current_img, goal_img], dim=1)
             goal_encoding = self.goal_encoder.extract_features(obsgoal_img)
@@ -223,7 +246,13 @@ class NoMaDViNT(nn.Module):
                 self.avg_pool_mask.to(device), 0, goal_mask_index
             ).unsqueeze(-1)
             obs_encoding_tokens = obs_encoding_tokens * avg_mask
-        return torch.mean(obs_encoding_tokens, dim=1)
+        obsgoal_cond = torch.mean(obs_encoding_tokens, dim=1)
+        if (
+            direction_encoding is not None
+            and self.direction_conditioning_mode == "residual"
+        ):
+            obsgoal_cond = obsgoal_cond + direction_encoding.squeeze(1)
+        return obsgoal_cond
 
     def _direction_token(self, obs_encoding: torch.Tensor, cmd_dir: torch.Tensor = None):
         batch_size = obs_encoding.shape[0]
