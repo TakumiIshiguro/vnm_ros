@@ -211,6 +211,83 @@ def resized(image, height):
     return image.resize((width, height), Image.Resampling.BILINEAR)
 
 
+def prepare_image_panel(images, context_indices, context_height):
+    if not images or len(images) != len(context_indices):
+        raise ValueError("images and context_indices must have the same non-zero length")
+
+    history = list(zip(images[:-1], context_indices[:-1]))[-3:]
+    context_previews = [
+        (resized(image, context_height), int(index))
+        for image, index in history
+    ]
+    observation_height = max(int(context_height) + 1, int(context_height) * 2)
+    observation = resized(images[-1], observation_height)
+    gap = 12
+    context_width = max(
+        (image.width for image, _ in context_previews),
+        default=0,
+    )
+    context_stack_height = (
+        sum(image.height for image, _ in context_previews)
+        + gap * max(0, len(context_previews) - 1)
+    )
+    panel_height = max(context_stack_height, observation.height)
+    observation_x = context_width + (gap if context_previews else 0)
+    return {
+        "contexts": context_previews,
+        "observation": observation,
+        "observation_index": int(context_indices[-1]),
+        "gap": gap,
+        "context_width": context_width,
+        "observation_x": observation_x,
+        "width": observation_x + observation.width,
+        "height": panel_height,
+    }
+
+
+def draw_image_panel(canvas, draw, panel, origin):
+    origin_x, origin_y = origin
+    contexts = panel["contexts"]
+    y = origin_y
+    for offset, (image, index) in enumerate(contexts):
+        x = origin_x + (panel["context_width"] - image.width) // 2
+        canvas.paste(image, (x, y))
+        draw.rectangle(
+            (x, y, x + image.width - 1, y + image.height - 1),
+            outline=(170, 170, 170),
+            width=3,
+        )
+        label = f"t-{len(contexts) - offset} idx={index}"
+        draw.rectangle((x + 5, y + 5, x + 105, y + 24), fill=(0, 0, 0))
+        draw.text((x + 9, y + 7), label, fill=(255, 255, 255))
+        y += image.height + panel["gap"]
+
+    observation = panel["observation"]
+    observation_x = origin_x + panel["observation_x"]
+    observation_y = origin_y + (panel["height"] - observation.height) // 2
+    canvas.paste(observation, (observation_x, observation_y))
+    draw.rectangle(
+        (
+            observation_x,
+            observation_y,
+            observation_x + observation.width - 1,
+            observation_y + observation.height - 1,
+        ),
+        outline=(30, 140, 70),
+        width=4,
+    )
+    label = f"current idx={panel['observation_index']}"
+    draw.rectangle(
+        (observation_x + 7, observation_y + 7, observation_x + 127, observation_y + 28),
+        fill=(0, 0, 0),
+    )
+    draw.text(
+        (observation_x + 11, observation_y + 9),
+        label,
+        fill=(255, 255, 255),
+    )
+
+
 def draw_path_plot(draw, box, teacher, predictions, selected):
     x0, y0, x1, y1 = box
     margin = 34
@@ -329,13 +406,15 @@ def render_preview(
     record,
     image_height,
 ):
-    previews = [resized(image, image_height) for image in images]
-    gap = 12
-    image_width = sum(image.width for image in previews) + gap * (len(previews) - 1)
+    image_panel = prepare_image_panel(images, context_indices, image_height)
     plot_width = 440
     plot_height = 400
-    canvas_width = 24 + image_width + 24 + plot_width + 24
-    canvas_height = max(500, 96 + image_height + 30, 68 + plot_height + 24)
+    canvas_width = 24 + image_panel["width"] + 24 + plot_width + 24
+    canvas_height = max(
+        500,
+        92 + image_panel["height"] + 24,
+        68 + plot_height + 24,
+    )
     canvas = Image.new("RGB", (canvas_width, canvas_height), (250, 250, 250))
     draw = ImageDraw.Draw(canvas)
     title = (
@@ -349,20 +428,9 @@ def render_preview(
         f"angle_error={record['endpoint_angle_error_deg']:+.1f}deg",
         fill=(20, 20, 20),
     )
-    x = 24
-    for offset, (image, index) in enumerate(zip(previews, context_indices)):
-        canvas.paste(image, (x, 92))
-        current = offset == len(previews) - 1
-        draw.rectangle(
-            (x, 92, x + image.width, 92 + image.height),
-            outline=(30, 140, 70) if current else (170, 170, 170),
-            width=3,
-        )
-        label = "current" if current else f"t-{len(previews) - 1 - offset}"
-        draw.text((x, 70), f"{label} idx={int(index)}", fill=(30, 30, 30))
-        x += image.width + gap
+    draw_image_panel(canvas, draw, image_panel, (24, 92))
 
-    plot_x = 24 + image_width + 24
+    plot_x = 24 + image_panel["width"] + 24
     draw.text((plot_x, 16), "robot frame: x=forward, y=left", fill=(20, 20, 20))
     draw.text(
         (plot_x, 40),
@@ -391,13 +459,15 @@ def render_command_comparison(
     teacher_command,
     image_height,
 ):
-    previews = [resized(image, image_height) for image in images]
-    gap = 12
-    image_width = sum(image.width for image in previews) + gap * (len(previews) - 1)
+    image_panel = prepare_image_panel(images, context_indices, image_height)
     plot_width = 500
     plot_height = 430
-    canvas_width = 24 + image_width + 24 + plot_width + 24
-    canvas_height = max(520, 96 + image_height + 30, 76 + plot_height + 24)
+    canvas_width = 24 + image_panel["width"] + 24 + plot_width + 24
+    canvas_height = max(
+        520,
+        92 + image_panel["height"] + 24,
+        76 + plot_height + 24,
+    )
     canvas = Image.new("RGB", (canvas_width, canvas_height), (250, 250, 250))
     draw = ImageDraw.Draw(canvas)
     draw.text(
@@ -407,20 +477,9 @@ def render_command_comparison(
         fill=(20, 20, 20),
     )
 
-    x = 24
-    for offset, (image, index) in enumerate(zip(previews, context_indices)):
-        canvas.paste(image, (x, 92))
-        current = offset == len(previews) - 1
-        draw.rectangle(
-            (x, 92, x + image.width, 92 + image.height),
-            outline=(30, 140, 70) if current else (170, 170, 170),
-            width=3,
-        )
-        label = "current" if current else f"t-{len(previews) - 1 - offset}"
-        draw.text((x, 70), f"{label} idx={int(index)}", fill=(30, 30, 30))
-        x += image.width + gap
+    draw_image_panel(canvas, draw, image_panel, (24, 92))
 
-    plot_x = 24 + image_width + 24
+    plot_x = 24 + image_panel["width"] + 24
     draw.text((plot_x, 16), "same context and diffusion noise", fill=(20, 20, 20))
     legend_x = plot_x
     draw.text((legend_x, 40), "teacher", fill=(40, 160, 75))
