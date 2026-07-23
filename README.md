@@ -80,6 +80,17 @@ Holding `a` publishes left, holding `d` publishes right, and no key publishes
 straight. The `hold_timeout` launch parameter controls how quickly the command
 returns to straight after key repeat stops.
 
+Publish manual direction commands from a game controller:
+
+```bash
+roslaunch vnm_ros controller_cmd_dir.launch
+```
+
+The horizontal D-pad selects left/right and the left stick is used as a
+fallback. Neutral input and controller timeout publish straight. Axis numbers,
+thresholds, inversion, and optional button mappings are launch arguments. Do
+not run the keyboard and controller publishers at the same time.
+
 Run navigation with the camera/cmd_vel overlay viewer:
 
 ```bash

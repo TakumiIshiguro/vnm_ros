@@ -19,6 +19,7 @@ catkin_package()
 catkin_install_python(PROGRAMS
   scripts/augment_dataset_horizontal_flip.py
   scripts/collect_dataset_nav_recovery.py
+  scripts/controller_cmd_dir.py
   scripts/create_dataset.py
   scripts/create_topomap.py
   scripts/evaluate_dataset_predictions.py

@@ -125,6 +125,7 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 | パラメータ | 意味 |
 | --- | --- |
 | `image_topic` | 推論、Topomap作成、Dataset作成に使うカメラ画像です。 |
+| `joy_topic` | 手動方向入力に使う `sensor_msgs/Joy` です。 |
 | `cmd_dir_topic` | ViNT/NoMaDの方向conditioned exploreで使う `scenario_navigation_msgs/cmd_dir_intersection` です。 |
 | `odometry_topic` | Datasetへ位置とyawを保存するためのオドメトリです。 |
 | `amcl_pose_topic` | Datasetへ位置とyawを保存するためのAMCL自己位置です。 |
