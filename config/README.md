@@ -97,6 +97,7 @@ NoMaD専用、またはNoMaD checkpointに合わせる設定です。
 | `cond_predict_scale` | NoMaD diffusion U-Netで条件付きscale予測を使うかを指定します。 |
 | `direction_conditioning` | `true` の場合、`cmd_dir` のラベルindexから学習可能なlatent `z_i` を選び、MLPで方向条件ベクトルへ変換します。 |
 | `direction_conditioning_mode` | `residual`では公式NoMaDのgoal-masked条件ベクトルへ方向条件を加算します。`token`は方向条件をgoal token位置へ入れる旧方式です。両方式のcheckpointに互換性はありません。 |
+| `direction_scale` | `residual`方式で、方向encoderの出力をNoMaD条件へ加算する強度です。`0`で元NoMaD条件をそのまま使い、既存の方向checkpointにはまず`0.1`程度を推奨します。 |
 | `direction_num_commands` | 方向コマンド数です。通常はstraight/left/rightの3です。 |
 | `direction_latent_dim` | コマンドごとの学習可能latent `z_i` の次元数です。 |
 | `direction_hidden_dim` | `z_i` から方向tokenを作るMLPの隠れ層次元数です。 |
