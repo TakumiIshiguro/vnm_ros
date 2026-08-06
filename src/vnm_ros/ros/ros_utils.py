@@ -12,7 +12,12 @@ def waypoint_msg(waypoint: Sequence[float]) -> Float32MultiArray:
     return msg
 
 
-def action_candidates_msg(actions, selected_sample: int, waypoint_index: int) -> Float32MultiArray:
+def action_candidates_msg(
+    actions,
+    selected_sample: int,
+    waypoint_index: int,
+    avoidance_active: bool = False,
+) -> Float32MultiArray:
     msg = Float32MultiArray()
     sample_count = len(actions)
     horizon = len(actions[0]) if sample_count > 0 else 0
@@ -28,7 +33,9 @@ def action_candidates_msg(actions, selected_sample: int, waypoint_index: int) ->
     for sample in actions:
         for waypoint in sample:
             values.extend(map(float, waypoint))
-    msg.data = header + values
+    # Append optional state after the trajectory payload so older decoders,
+    # which read exactly the expected payload length, remain compatible.
+    msg.data = header + values + [float(bool(avoidance_active))]
     return msg
 
 
