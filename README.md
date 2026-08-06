@@ -43,6 +43,7 @@ depend on `warmup-scheduler`; it is needed only because the original
 - `scripts/train.py`: train ViNT from a processed dataset.
 - `scripts/eval.py`: evaluate a checkpoint on the automatically held-out data.
 - `scripts/vnm_node.py`: load model, select subgoal, publish waypoint/cmd_vel.
+- `scripts/care_overlay.py`: overlay NoMaD candidates and robot-frame obstacles.
 - `config/topics.yaml`: ROS topic names and frame id.
 - `config/vint.yaml`: ViNT model, dataset collection, and training settings.
 - `config/nomad.yaml`: NoMaD model, dataset collection, and training settings.
@@ -96,6 +97,50 @@ Run navigation with the camera/cmd_vel overlay viewer:
 ```bash
 roslaunch vnm_ros navigate_visualization.launch
 ```
+
+Run goal-free CARE exploration, which starts goal-masked NoMaD and metric
+depth estimation. Direction conditioning and the `cmd_dir` input are disabled.
+CARE applies APF repulsion to the first NoMaD trajectory, rotates the complete
+trajectory away from obstacles, and publishes its avoidance command; velocity
+output remains disabled by default:
+
+```bash
+roslaunch vnm_ros care_navigation.launch
+```
+
+After checking the candidates and obstacle point cloud, enable robot motion:
+
+```bash
+roslaunch vnm_ros care_navigation.launch publish_cmd_vel:=true
+```
+
+To show the common robot-coordinate BEV at the same time:
+
+```bash
+roslaunch vnm_ros care_visualization.launch
+```
+
+This launch opens both the CARE BEV and the colorized UniDepthV2 metric-depth image from
+`/corridor_classifier/depth_color`. Set `show_depth_image:=false` to hide only
+the depth window.
+
+The depth node publishes bin-selected CARE obstacles on
+`/corridor_classifier/obstacle_points` and all filtered points on
+`/corridor_classifier/obstacle_points_all`, both in `base_footprint`. The CARE
+BEV draws all points in gray and the bin-selected CARE input in red, together
+with `/vnm/action_candidates`. The selected path is yellow during normal
+navigation and changes to magenta while CARE is applying avoidance rotation.
+The default view is forward 1.2 m by lateral
+3 m (-1.5 to +1.5 m), using the same pixels-per-metre scale on both axes. The result is
+published as an image on `/vnm/care_bev`. Set `start_navigation:=false` or
+`start_depth_estimator:=false` when those nodes are already running.
+
+Avoidance parameters are under `avoidance` in `config/care.yaml`. Following the
+CARE paper, the module finds the waypoint with the strongest inverse-distance
+repulsive force, clips the trajectory rotation to 45 degrees, and uses the
+Safe-FOV rule to suppress forward velocity above a 30-degree desired heading.
+It publishes a zero trajectory when `require_obstacle_data: true` and the point
+cloud is missing or stale.
 
 Both launch files use the same files under `config/`. Set `publish_cmd_vel:
 false` in `config/runtime.yaml` for model testing without moving the robot, or

@@ -104,7 +104,7 @@ NoMaD専用、またはNoMaD checkpointに合わせる設定です。
 | `num_diffusion_iters` | NoMaD推論時の逆拡散ステップ数です。 |
 | `num_action_samples` | NoMaDでゴール候補ごとにサンプルするAction数です。 |
 | `action_noise_scale` | NoMaD diffusionの初期ノイズ倍率です。`1.0` が標準で、大きくすると候補のばらつきが増えます。 |
-| `action_sample_strategy` | 複数Actionサンプルの選び方です。`first`、`mean`、または探索モード用の `cmd_dir` を指定します。`direction_conditioning: true` なら `first`/`mean` でも `cmd_dir` はNoMaDのモデル入力として使われます。`mean` は `cmd_dir` 条件付きで生成した候補軌道の平均を使います。探索モードで `cmd_dir` の場合、各候補軌道の円周平均角を `cmd_dir_theta_threshold_deg` でleft/straight/rightへ分け、目標方向クラスタのmedoidを選びます。 |
+| `action_sample_strategy` | 複数Actionサンプルの選び方です。`first`、`mean`、探索モード用の `cmd_dir`、または障害物回避用の `care` を指定します。`care`は方向条件を無効化し、最初の軌道へ`care.yaml`のAPF斥力回転とSafe-FOV制御を適用します。`direction_conditioning: true` なら `first`/`mean` でも `cmd_dir` はNoMaDのモデル入力として使われます。`mean` は `cmd_dir` 条件付きで生成した候補軌道の平均を使います。探索モードで `cmd_dir` の場合、各候補軌道の円周平均角を `cmd_dir_theta_threshold_deg` でleft/straight/rightへ分け、目標方向クラスタのmedoidを選びます。 |
 | `cmd_dir_theta_threshold_deg` | `action_sample_strategy: cmd_dir` で候補軌道をleft/straight/rightに分ける代表方向角の閾値 `[deg]` です。 |
 | `action_stats` | NoMaDの正規化済みActionを実Actionへ戻すためのmin/maxです。 |
 
@@ -139,6 +139,27 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 | `topomap_image_topic` | 現在選択されているTopomap画像の配信先です。 |
 | `annotated_image_topic` | カメラ画像へAction候補などを重ねた画像の配信先です。 |
 | `frame_id` | Waypoint Markerの基準フレームです。 |
+
+## care.yaml
+
+目標方向を与えないNoMaD探索で、UniDepthV2由来の障害物点群を使って
+回避候補を選択する設定です。`care_navigation.launch`は公式事前学習済みNoMaDを
+goal mask状態で使い、`cmd_dir`を購読しません。
+
+| パラメータ | 意味 |
+| --- | --- |
+| `runtime.stale_timeout_seconds` | 障害物点群を有効とみなす受信後の時間 `[s]` です。 |
+| `runtime.robot_frame` | Actionと障害物を比較するロボット座標系です。 |
+| `avoidance.require_obstacle_data` | `true`なら点群未受信・タイムアウト時に停止します。 |
+| `avoidance.num_action_samples` | 1回のNoMaD推論で生成する候補軌道数です。 |
+| `avoidance.waypoint_index` | 制御とSafe-FOVに用いるwaypoint番号です。論文の第2 waypointは0始まりで`1`です。 |
+| `avoidance.maximum_forward_range_m` | 軌跡を延長して障害物を評価する最大前方距離 `[m]` です。 |
+| `avoidance.path_influence_radius_m` | 延長軌跡からこの距離以内にある障害物だけをAPF計算へ使用します。 |
+| `avoidance.depth_offset_m` | ロボット寸法と深度誤差を補償するため障害物距離から差し引く値 `[m]` です。 |
+| `avoidance.minimum_force_distance_m` | 斥力の発散を防ぐ最小距離 `[m]` です。 |
+| `avoidance.force_balance_ratio_threshold` | 合力を個別斥力の大きさの総和で割った値がこの閾値未満なら、左右壁が釣り合っているとして軌道を補正しません。 |
+| `avoidance.theta_clip_degrees` | APFによる軌道回転角の上限 `[deg]` です。 |
+| `avoidance.safe_fov_threshold_degrees` | これを超える希望方位では前進を止め、その場旋回する閾値 `[deg]` です。 |
 
 ## runtime.yaml
 
