@@ -1,0 +1,38 @@
+<launch>
+  <arg name="config_dir" default="$(find vnm_ros)/config"/>
+  <arg name="corridor_config_dir" default="$(find corridor_classifier)/config"/>
+  <arg name="start_navigation" default="true"/>
+  <arg name="start_depth_estimator" default="true"/>
+  <arg name="show_image" default="true"/>
+  <arg name="show_depth_image" default="true"/>
+  <arg name="use_pretrained_weights" default="true"/>
+  <arg name="checkpoint_path_override" default=""/>
+  <arg name="publish_cmd_vel" default="false"/>
+  <arg name="device_override" default=""/>
+  <arg name="care_bev_topic" default="/vnm/care_bev"/>
+  <arg name="depth_color_topic" default="/corridor_classifier/depth_color"/>
+
+  <include file="$(find vnm_ros)/launch/care_navigation.launch">
+    <arg name="config_dir" value="$(arg config_dir)"/>
+    <arg name="corridor_config_dir" value="$(arg corridor_config_dir)"/>
+    <arg name="start_navigation" value="$(arg start_navigation)"/>
+    <arg name="start_depth_estimator" value="$(arg start_depth_estimator)"/>
+    <arg name="use_pretrained_weights" value="$(arg use_pretrained_weights)"/>
+    <arg name="checkpoint_path_override" value="$(arg checkpoint_path_override)"/>
+    <arg name="publish_cmd_vel" value="$(arg publish_cmd_vel)"/>
+    <arg name="device_override" value="$(arg device_override)"/>
+  </include>
+
+  <node pkg="vnm_ros" type="care_overlay.py" name="care_overlay" output="screen">
+    <param name="config_dir" value="$(arg config_dir)"/>
+    <param name="care_bev_topic_override" value="$(arg care_bev_topic)"/>
+  </node>
+
+  <node pkg="image_view" type="image_view" name="care_image_view" if="$(arg show_image)" output="screen">
+    <remap from="image" to="$(arg care_bev_topic)"/>
+  </node>
+
+  <node pkg="image_view" type="image_view" name="care_depth_image_view" if="$(arg show_depth_image)" output="screen">
+    <remap from="image" to="$(arg depth_color_topic)"/>
+  </node>
+</launch>
