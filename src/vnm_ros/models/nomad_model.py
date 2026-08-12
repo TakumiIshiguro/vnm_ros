@@ -8,6 +8,7 @@ The diffusion action head depends on the external `diffusion_policy` package.
 It is imported lazily so ViNT-only use does not require NoMaD dependencies.
 """
 
+import math
 from typing import Callable, Optional
 
 import torch
@@ -103,6 +104,7 @@ class NoMaDViNT(nn.Module):
         mha_ff_dim_factor: Optional[int] = 4,
         direction_encoder: Optional[nn.Module] = None,
         direction_conditioning_mode: str = "token",
+        direction_scale: float = 1.0,
     ) -> None:
         super().__init__()
         self.obs_encoding_size = obs_encoding_size
@@ -110,6 +112,9 @@ class NoMaDViNT(nn.Module):
         self.context_size = context_size
         self.direction_encoder = direction_encoder
         self.direction_conditioning_mode = str(direction_conditioning_mode)
+        self.direction_scale = float(direction_scale)
+        if not math.isfinite(self.direction_scale) or self.direction_scale < 0.0:
+            raise ValueError("direction_scale must be a finite non-negative value")
         if self.direction_encoder is not None and self.direction_conditioning_mode not in (
             "token",
             "residual",
@@ -251,7 +256,10 @@ class NoMaDViNT(nn.Module):
             direction_encoding is not None
             and self.direction_conditioning_mode == "residual"
         ):
-            obsgoal_cond = obsgoal_cond + direction_encoding.squeeze(1)
+            obsgoal_cond = (
+                obsgoal_cond
+                + self.direction_scale * direction_encoding.squeeze(1)
+            )
         return obsgoal_cond
 
     def _direction_token(self, obs_encoding: torch.Tensor, cmd_dir: torch.Tensor = None):
@@ -272,7 +280,6 @@ class NoMaDViNT(nn.Module):
                     f"cmd_dir batch size {cmd_dir.shape[0]} does not match image batch {batch_size}"
                 )
         return self.direction_encoder(cmd_dir).unsqueeze(1)
-
 
 def build_conditional_unet1d(
     input_dim: int, global_cond_dim: int, down_dims, cond_predict_scale: bool

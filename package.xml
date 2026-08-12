@@ -2,7 +2,7 @@
 <package format="2">
   <name>vnm_ros</name>
   <version>0.1.0</version>
-  <description>Standalone ROS training and inference package for ViNT.</description>
+  <description>ROS training, inference, and CARE visualization for ViNT and NoMaD.</description>
 
   <maintainer email="takumi@example.com">takumi</maintainer>
   <license>MIT</license>
@@ -27,6 +27,7 @@
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>unidepth_ros</exec_depend>
   <exec_depend>rosbag</exec_depend>
   <exec_depend>image_view</exec_depend>
   <exec_depend>joy</exec_depend>

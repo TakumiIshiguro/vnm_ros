@@ -158,6 +158,7 @@ def _build_nomad(config: Dict):
         mha_ff_dim_factor=int(config["mha_ff_dim_factor"]),
         direction_encoder=direction_encoder,
         direction_conditioning_mode=direction_mode,
+        direction_scale=float(config.get("direction_scale", 1.0)),
     )
     noise_pred_net = build_conditional_unet1d(
         input_dim=2,

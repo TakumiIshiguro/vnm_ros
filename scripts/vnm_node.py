@@ -12,15 +12,22 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
 from visualization_msgs.msg import Marker
 
+from vnm_ros.care import CareRepulsiveAdjuster
 from vnm_ros.control.cmd_dir_action_selector import CmdDirActionSelector
 from vnm_ros.control.waypoint_controller import WaypointController
 from vnm_ros.models.vnm_model import VNMModel
 from vnm_ros.ros.cmd_vel_publisher import CmdVelPublisher
 from vnm_ros.ros.image_subscriber import ImageContextSubscriber
+from vnm_ros.ros.obstacle_subscriber import ObstaclePointSubscriber
 from vnm_ros.ros.ros_utils import action_candidates_msg, waypoint_marker, waypoint_msg
 from vnm_ros.topomap.subgoal_selector import SubgoalSelector
 from vnm_ros.topomap.topomap import Topomap
-from vnm_ros.utils.config import load_runtime_config, package_root, resolve_path
+from vnm_ros.utils.config import (
+    load_care_config,
+    load_runtime_config,
+    package_root,
+    resolve_path,
+)
 from vnm_ros.utils.image_utils import pil_to_msg
 from vnm_ros.utils.logger import info
 
@@ -117,11 +124,29 @@ def main():
     if action_sample_strategy_override:
         model_cfg["action_sample_strategy"] = action_sample_strategy_override
 
-    checkpoint = resolve_path(checkpoint, package_root())
-    model = VNMModel(model_cfg, checkpoint)
     navigation_mode = robot.get("navigation_mode", "topomap")
     action_sample_strategy = model_cfg.get("action_sample_strategy", "first")
     select_by_cmd_dir = action_sample_strategy == "cmd_dir"
+    select_by_care = action_sample_strategy == "care"
+    care_cfg = None
+    if select_by_care:
+        if navigation_mode != "explore" or model_cfg["model_type"] != "nomad":
+            raise ValueError(
+                "action_sample_strategy=care requires NoMaD exploration mode"
+            )
+        # CARE uses the official goal-masked NoMaD condition. Obstacle costs,
+        # rather than a target direction token, choose the sampled action.
+        model_cfg["direction_conditioning"] = False
+        care_cfg = load_care_config(config_dir)
+        model_cfg["num_action_samples"] = care_cfg["avoidance"][
+            "num_action_samples"
+        ]
+        model_cfg["waypoint_index"] = care_cfg["avoidance"][
+            "waypoint_index"
+        ]
+
+    checkpoint = resolve_path(checkpoint, package_root())
+    model = VNMModel(model_cfg, checkpoint)
     use_cmd_dir_input = bool(model_cfg.get("direction_conditioning", False)) or select_by_cmd_dir
     if navigation_mode == "explore" and not (
         model_cfg["model_type"] == "nomad"
@@ -154,6 +179,33 @@ def main():
     action_selector = CmdDirActionSelector(
         theta_threshold_deg=float(model_cfg.get("cmd_dir_theta_threshold_deg", 15.0))
     )
+    care_adjuster = None
+    obstacle_subscriber = None
+    if select_by_care:
+        avoidance = care_cfg["avoidance"]
+        care_adjuster = CareRepulsiveAdjuster(
+            maximum_forward_range_m=avoidance[
+                "maximum_forward_range_m"
+            ],
+            path_influence_radius_m=avoidance[
+                "path_influence_radius_m"
+            ],
+            depth_offset_m=avoidance["depth_offset_m"],
+            minimum_force_distance_m=avoidance[
+                "minimum_force_distance_m"
+            ],
+            force_balance_ratio_threshold=avoidance[
+                "force_balance_ratio_threshold"
+            ],
+            theta_clip_degrees=avoidance["theta_clip_degrees"],
+            safe_fov_threshold_degrees=avoidance[
+                "safe_fov_threshold_degrees"
+            ],
+        )
+        obstacle_subscriber = ObstaclePointSubscriber(
+            care_cfg["topics"]["obstacle_points_topic"],
+            care_cfg["runtime"]["robot_frame"],
+        )
     if navigation_mode == "explore" and use_cmd_dir_input:
         rospy.Subscriber(
             topics["cmd_dir_topic"],
@@ -210,6 +262,18 @@ def main():
     )
     if navigation_mode == "explore":
         info(f"action_sample_strategy={action_sample_strategy}")
+        if select_by_care:
+            info(
+                "CARE goal-free exploration enabled: direction_conditioning=false "
+                f"samples={model_cfg['num_action_samples']} "
+                f"waypoint_index={waypoint_index} "
+                f"forward_range={care_adjuster.maximum_forward_range_m:.3f}m "
+                f"path_radius={care_adjuster.path_influence_radius_m:.3f}m "
+                f"balance_ratio_threshold="
+                f"{care_adjuster.force_balance_ratio_threshold:.3f} "
+                f"theta_clip={np.rad2deg(care_adjuster.theta_clip):.1f}deg "
+                f"obstacles={care_cfg['topics']['obstacle_points_topic']}"
+            )
         if use_cmd_dir_input:
             info(f"direction_conditioning={model_cfg.get('direction_conditioning', False)}")
             info(
@@ -244,11 +308,84 @@ def main():
         waiting_for_cmd_dir_logged = False
 
         if image_sub.ready() and not reached:
+            care_rotate_in_place = False
+            care_avoidance_active = False
             if navigation_mode == "explore":
                 cmd_dir = action_selector.cmd_dir if use_cmd_dir_input else None
                 target_name = cmd_dir_name(cmd_dir)
                 actions = model.predict_explore(image_sub.context(), cmd_dir=cmd_dir)
-                if select_by_cmd_dir:
+                if select_by_care:
+                    actions = model.scale_waypoint(
+                        actions,
+                        max_v=float(robot["max_v"]),
+                        model_rate=float(robot["model_rate"]),
+                    )
+                    obstacle_points = obstacle_subscriber.latest(
+                        care_cfg["runtime"]["stale_timeout_seconds"]
+                    )
+                    if (
+                        obstacle_points is None
+                        and care_cfg["avoidance"]["require_obstacle_data"]
+                    ):
+                        care_adjustment = care_adjuster.stop(
+                            actions[0],
+                            "obstacle_data_missing_or_stale",
+                        )
+                    else:
+                        if obstacle_points is None:
+                            obstacle_points = np.empty(
+                                (0, 2),
+                                dtype=np.float32,
+                            )
+                        care_adjustment = care_adjuster.adjust(
+                            actions[0],
+                            obstacle_points,
+                        )
+                    selected_action = care_adjustment.action
+                    care_rotate_in_place = care_adjustment.rotate_in_place
+                    selected_waypoint_index = min(
+                        waypoint_index,
+                        actions.shape[1] - 1,
+                    )
+                    waypoint = selected_action[selected_waypoint_index]
+                    display_actions = actions
+                    display_selected_sample = 0
+                    action_was_adjusted = (
+                        care_adjustment.stopped
+                        or abs(care_adjustment.rotation_angle) > 1e-8
+                    )
+                    care_avoidance_active = (
+                        not care_adjustment.stopped
+                        and abs(care_adjustment.rotation_angle) > 1e-8
+                    )
+                    if action_was_adjusted:
+                        display_actions = np.concatenate(
+                            (
+                                actions,
+                                selected_action[np.newaxis, :, :],
+                            ),
+                            axis=0,
+                        )
+                        display_selected_sample = display_actions.shape[0] - 1
+                    strongest_text = (
+                        "none"
+                        if care_adjustment.strongest_waypoint_index is None
+                        else str(care_adjustment.strongest_waypoint_index)
+                    )
+                    info(
+                        "target_dir=none mode=care "
+                        f"selected_sample={display_selected_sample} "
+                        f"rotation={np.rad2deg(care_adjustment.rotation_angle):.1f}deg "
+                        f"balance_ratio={care_adjustment.force_balance_ratio:.3f} "
+                        f"heading={np.rad2deg(care_adjustment.desired_heading):.1f}deg "
+                        f"strongest_waypoint={strongest_text} "
+                        f"rotate_in_place={care_rotate_in_place} "
+                        f"stopped={care_adjustment.stopped} "
+                        f"reason={care_adjustment.reason} "
+                        f"waypoint=({float(waypoint[0]):.3f},"
+                        f"{float(waypoint[1]):.3f})"
+                    )
+                elif select_by_cmd_dir:
                     waypoint = action_selector.select(actions, waypoint_index)
                     selected_action = action_selector.selected_action
                     selected_sample = action_selector.selected_sample
@@ -263,25 +400,30 @@ def main():
                     selected_action = actions[0]
                     selected_sample = 0
                     info(f"target_dir={target_name} mode=explore selected_sample=0 target_angle=None")
-                actions = model.scale_waypoint(
-                    actions,
-                    max_v=float(robot["max_v"]),
-                    model_rate=float(robot["model_rate"]),
-                )
-                selected_action = model.scale_waypoint(
-                    selected_action,
-                    max_v=float(robot["max_v"]),
-                    model_rate=float(robot["model_rate"]),
-                )
-                selected_waypoint_index = min(waypoint_index, actions.shape[1] - 1)
-                waypoint = selected_action[selected_waypoint_index]
-                display_actions = actions
-                display_selected_sample = selected_sample
-                if selected_sample < 0:
-                    display_actions = np.concatenate(
-                        [actions, selected_action[np.newaxis, :, :]], axis=0
+                if not select_by_care:
+                    actions = model.scale_waypoint(
+                        actions,
+                        max_v=float(robot["max_v"]),
+                        model_rate=float(robot["model_rate"]),
                     )
-                    display_selected_sample = display_actions.shape[0] - 1
+                    selected_action = model.scale_waypoint(
+                        selected_action,
+                        max_v=float(robot["max_v"]),
+                        model_rate=float(robot["model_rate"]),
+                    )
+                    selected_waypoint_index = min(
+                        waypoint_index,
+                        actions.shape[1] - 1,
+                    )
+                    waypoint = selected_action[selected_waypoint_index]
+                    display_actions = actions
+                    display_selected_sample = selected_sample
+                    if selected_sample < 0:
+                        display_actions = np.concatenate(
+                            [actions, selected_action[np.newaxis, :, :]],
+                            axis=0,
+                        )
+                        display_selected_sample = display_actions.shape[0] - 1
                 if select_by_cmd_dir:
                     info(
                         f"target_dir={action_selector.target_name} "
@@ -295,6 +437,7 @@ def main():
                         display_actions,
                         selected_sample=display_selected_sample,
                         waypoint_index=selected_waypoint_index,
+                        avoidance_active=care_avoidance_active,
                     )
                 )
             else:
@@ -324,6 +467,8 @@ def main():
                 )
 
             v, w = controller.command(waypoint, waypoint_index)
+            if select_by_care and care_rotate_in_place:
+                v = 0.0
             cmd_debug = Twist()
             cmd_debug.linear.x = v
             cmd_debug.angular.z = w

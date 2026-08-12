@@ -1,0 +1,28 @@
+runtime:
+  rate: 4.0
+  stale_timeout_seconds: 1.0
+  robot_frame: base_footprint
+
+map:
+  width_m: 3.0
+  height_m: 1.2
+  image_size: [640, 640]
+  grid_spacing_m: 0.5
+  obstacle_radius_pixels: 2
+
+avoidance:
+  require_obstacle_data: true
+  num_action_samples: 8
+  waypoint_index: 1
+  maximum_forward_range_m: 1.0
+  # Narrowest corridor has walls about 0.50 m from the centerline.
+  # Use the 0.30 m robot half-width plus a 0.10 m safety margin.
+  path_influence_radius_m: 0.40
+  # UniDepth now receives the Gazebo fisheye model, so do not pull points closer.
+  depth_offset_m: 0.0
+  # Cap the inverse-distance force from isolated near-wall points.
+  minimum_force_distance_m: 0.10
+  # Ignore small residual forces when left/right wall repulsion is balanced.
+  force_balance_ratio_threshold: 0.30
+  theta_clip_degrees: 45.0
+  safe_fov_threshold_degrees: 30.0

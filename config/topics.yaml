@@ -5,6 +5,9 @@ odometry_topic: /odom
 amcl_pose_topic: /mcl_pose
 waypoint_topic: /waypoint
 action_candidates_topic: /vnm/action_candidates
+obstacle_points_topic: /unidepth/obstacle_points
+all_obstacle_points_topic: /unidepth/obstacle_points_all
+care_bev_topic: /vnm/care_bev
 cmd_vel_topic: /cmd_vel
 cmd_vel_debug_topic: /vnm/cmd_vel_debug
 reset_context_topic: /vnm/reset_context

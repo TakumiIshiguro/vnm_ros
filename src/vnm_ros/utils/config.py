@@ -127,3 +127,126 @@ def load_runtime_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
     }
     apply_shared_paths(config)
     return config
+
+
+def load_care_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
+    if config_dir is None:
+        config_dir = os.path.join(package_root(), "config")
+    config_dir = os.path.abspath(os.path.expanduser(config_dir))
+    care = load_yaml(os.path.join(config_dir, "care.yaml"))
+    runtime = dict(care.get("runtime", {}))
+    map_config = dict(care.get("map", {}))
+    avoidance = dict(care.get("avoidance", {}))
+    topics = load_yaml(os.path.join(config_dir, "topics.yaml"))
+
+    runtime["rate"] = float(runtime.get("rate", 0.0))
+    runtime["stale_timeout_seconds"] = float(
+        runtime.get("stale_timeout_seconds", 0.0)
+    )
+    runtime["robot_frame"] = str(runtime.get("robot_frame", "")).strip()
+    if runtime["rate"] <= 0.0:
+        raise ValueError("care runtime.rate must be positive")
+    if runtime["stale_timeout_seconds"] <= 0.0:
+        raise ValueError("care runtime.stale_timeout_seconds must be positive")
+    if not runtime["robot_frame"]:
+        raise ValueError("care runtime.robot_frame must not be empty")
+
+    map_config["width_m"] = float(map_config.get("width_m", 0.0))
+    map_config["height_m"] = float(map_config.get("height_m", 0.0))
+    map_config["grid_spacing_m"] = float(
+        map_config.get("grid_spacing_m", 0.0)
+    )
+    map_config["obstacle_radius_pixels"] = int(
+        map_config.get("obstacle_radius_pixels", -1)
+    )
+    image_size = map_config.get("image_size", [])
+    if (
+        not isinstance(image_size, list)
+        or len(image_size) != 2
+        or any(int(value) < 256 for value in image_size)
+    ):
+        raise ValueError("care map.image_size must contain two values >= 256")
+    map_config["image_size"] = [int(value) for value in image_size]
+    if map_config["width_m"] <= 0.0 or map_config["height_m"] <= 0.0:
+        raise ValueError("care map dimensions must be positive")
+    if map_config["grid_spacing_m"] <= 0.0:
+        raise ValueError("care map.grid_spacing_m must be positive")
+    if map_config["obstacle_radius_pixels"] < 0:
+        raise ValueError("care map.obstacle_radius_pixels must be non-negative")
+
+    avoidance["require_obstacle_data"] = bool(
+        avoidance.get("require_obstacle_data", True)
+    )
+    avoidance["num_action_samples"] = int(
+        avoidance.get("num_action_samples", 8)
+    )
+    if avoidance["num_action_samples"] <= 0:
+        raise ValueError(
+            "care avoidance.num_action_samples must be positive"
+        )
+    avoidance["waypoint_index"] = int(
+        avoidance.get("waypoint_index", 1)
+    )
+    if avoidance["waypoint_index"] < 0:
+        raise ValueError(
+            "care avoidance.waypoint_index must be non-negative"
+        )
+    for key, default in (
+        ("maximum_forward_range_m", 1.5),
+        ("path_influence_radius_m", 0.40),
+        ("depth_offset_m", 0.05),
+        ("minimum_force_distance_m", 0.02),
+        ("force_balance_ratio_threshold", 0.15),
+        ("theta_clip_degrees", 45.0),
+        ("safe_fov_threshold_degrees", 30.0),
+    ):
+        avoidance[key] = float(avoidance.get(key, default))
+    if avoidance["maximum_forward_range_m"] <= 0.0:
+        raise ValueError(
+            "care avoidance.maximum_forward_range_m must be positive"
+        )
+    if avoidance["path_influence_radius_m"] <= 0.0:
+        raise ValueError(
+            "care avoidance.path_influence_radius_m must be positive"
+        )
+    if avoidance["depth_offset_m"] < 0.0:
+        raise ValueError(
+            "care avoidance.depth_offset_m must be non-negative"
+        )
+    if avoidance["minimum_force_distance_m"] <= 0.0:
+        raise ValueError(
+            "care avoidance.minimum_force_distance_m must be positive"
+        )
+    if not 0.0 <= avoidance["force_balance_ratio_threshold"] < 1.0:
+        raise ValueError(
+            "care avoidance.force_balance_ratio_threshold must be in [0, 1)"
+        )
+    if not 0.0 < avoidance["theta_clip_degrees"] <= 180.0:
+        raise ValueError(
+            "care avoidance.theta_clip_degrees must be in (0, 180]"
+        )
+    if not (
+        0.0
+        < avoidance["safe_fov_threshold_degrees"]
+        <= avoidance["theta_clip_degrees"]
+    ):
+        raise ValueError(
+            "care avoidance.safe_fov_threshold_degrees must be positive "
+            "and no greater than theta_clip_degrees"
+        )
+
+    required_topics = (
+        "action_candidates_topic",
+        "obstacle_points_topic",
+        "all_obstacle_points_topic",
+        "care_bev_topic",
+    )
+    missing = [key for key in required_topics if not topics.get(key)]
+    if missing:
+        raise ValueError(f"CARE topics are missing: {', '.join(missing)}")
+    return {
+        "runtime": runtime,
+        "map": map_config,
+        "avoidance": avoidance,
+        "topics": topics,
+    }

@@ -21,9 +21,10 @@ model:
   context_type: temporal
   normalize: true
   waypoint_index: 2
+  # checkpoint_path: weights/nomad.pth
   # checkpoint_path: weights/nomad/nav/epoch040.pth
-  checkpoint_path: weights/nomad/nav/joint_residual_epoch005.pth
-  # Stage 1完了後: weights/nomad/nav/only_direction_residual_epoch010.pth
+  # checkpoint_path: weights/nomad/nav/joint_residual_epoch005.pth
+  checkpoint_path: weights/nomad/nav/only_direction_epoch005.pth
   # token方式の既存checkpointはresidual方式と互換性がないため使用不可
   encoding_size: 256
   context_size: 3
@@ -34,6 +35,8 @@ model:
   down_dims: [64, 128, 256]
   direction_conditioning: true
   direction_conditioning_mode: residual
+  # Scale the direction residual before adding it to the NoMaD condition.
+  direction_scale: 0.75
   direction_num_commands: 3
   direction_latent_dim: 64
   direction_hidden_dim: 64
@@ -66,17 +69,44 @@ collection:
   angular_recovery_error: 0.8
   min_trajectory_samples: auto
 
+# training:
+#   model_name: ""
+#   pretrained_weights_path: weights/nomad.pth
+#   freeze_dist_pred_net: true
+#   freeze_layers:
+#   use_test: false
+#   tensorboard: true
+#   epoch: [40]
+#   batch_size: 64
+#   num_workers: 4
+#   learning_rate: 0.0001
+#   layer_learning_rates: {}
+#   weight_decay: 0.0001
+#   alpha: 0.0
+#   gradient_clip: 1.0
+#   cmd_dir_loss_weighting: false
+#   cmd_dir_loss_weight_power: 1.0
+#   scheduler: warmup_cosine
+#   warmup_epochs: 4
+#   resume: ""
+
 training:
-  model_name: ""
+  model_name: "only_direction"
   pretrained_weights_path: weights/nomad.pth
   freeze_dist_pred_net: true
   freeze_layers:
+    - vision_encoder.obs_encoder
+    - vision_encoder.goal_encoder
+    - vision_encoder.compress_obs_enc
+    - vision_encoder.compress_goal_enc
+    - vision_encoder.sa_encoder
+    - noise_pred_net
   use_test: false
   tensorboard: true
-  epoch: [40]
+  epoch: [5, 10]
   batch_size: 64
   num_workers: 4
-  learning_rate: 0.0001
+  learning_rate: 0.001
   layer_learning_rates: {}
   weight_decay: 0.0001
   alpha: 0.0
@@ -86,33 +116,6 @@ training:
   scheduler: warmup_cosine
   warmup_epochs: 4
   resume: ""
-
-# training:
-#   model_name: "only_direction_residual"
-#   pretrained_weights_path: weights/nomad.pth
-#   freeze_dist_pred_net: true
-#   freeze_layers:
-#     - vision_encoder.obs_encoder
-#     - vision_encoder.goal_encoder
-#     - vision_encoder.compress_obs_enc
-#     - vision_encoder.compress_goal_enc
-#     - vision_encoder.sa_encoder
-#     - noise_pred_net
-#   use_test: false
-#   tensorboard: true
-#   epoch: [10]
-#   batch_size: 64
-#   num_workers: 4
-#   learning_rate: 0.0005
-#   layer_learning_rates: {}
-#   weight_decay: 0.0001
-#   alpha: 0.0
-#   gradient_clip: 1.0
-#   cmd_dir_loss_weighting: false
-#   cmd_dir_loss_weight_power: 1.0
-#   scheduler: warmup_cosine
-#   warmup_epochs: 2
-#   resume: ""
 
 # Stage 2: Stage 1の学習完了後、上のtrainingセクションを以下へ置き換える。
 # training:

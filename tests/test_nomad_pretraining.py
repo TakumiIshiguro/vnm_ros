@@ -103,6 +103,71 @@ class NoMaDPretrainingTest(unittest.TestCase):
 
         torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
+    def test_direction_scale_scales_residual(self):
+        torch.manual_seed(0)
+        conditioned = NoMaDViNT(
+            context_size=1,
+            obs_encoding_size=32,
+            mha_num_attention_heads=4,
+            mha_num_attention_layers=1,
+            direction_encoder=DirectionEncoder(
+                embedding_dim=32,
+                hidden_dim=8,
+                latent_dim=4,
+            ),
+            direction_conditioning_mode="residual",
+        ).eval()
+        observation = torch.randn(2, 6, 32, 32)
+        goal = torch.randn(2, 3, 32, 32)
+        goal_mask = torch.ones(2, dtype=torch.long)
+        left = torch.tensor([[0.0, 1.0, 0.0]]).repeat(2, 1)
+
+        with torch.no_grad():
+            conditioned.direction_scale = 0.0
+            base = conditioned(
+                observation,
+                goal,
+                input_goal_mask=goal_mask,
+                cmd_dir=left,
+            )
+            conditioned.direction_scale = 1.0
+            full = conditioned(
+                observation,
+                goal,
+                input_goal_mask=goal_mask,
+                cmd_dir=left,
+            )
+            conditioned.direction_scale = 0.25
+            scaled = conditioned(
+                observation,
+                goal,
+                input_goal_mask=goal_mask,
+                cmd_dir=left,
+            )
+
+        torch.testing.assert_close(
+            scaled - base,
+            0.25 * (full - base),
+            atol=1e-5,
+            rtol=1e-5,
+        )
+
+    def test_rejects_invalid_direction_scale(self):
+        with self.assertRaisesRegex(ValueError, "direction_scale"):
+            NoMaDViNT(
+                context_size=1,
+                obs_encoding_size=32,
+                mha_num_attention_heads=4,
+                mha_num_attention_layers=1,
+                direction_encoder=DirectionEncoder(
+                    embedding_dim=32,
+                    hidden_dim=8,
+                    latent_dim=4,
+                ),
+                direction_conditioning_mode="residual",
+                direction_scale=-0.1,
+            )
+
     def test_checkpoint_uses_ema_for_inference_and_raw_model_for_resume(self):
         model = torch.nn.Linear(2, 1, bias=False)
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
