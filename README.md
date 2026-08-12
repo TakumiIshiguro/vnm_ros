@@ -98,11 +98,13 @@ Run navigation with the camera/cmd_vel overlay viewer:
 roslaunch vnm_ros navigate_visualization.launch
 ```
 
-Run goal-free CARE exploration, which starts goal-masked NoMaD and metric
-depth estimation. Direction conditioning and the `cmd_dir` input are disabled.
-CARE applies APF repulsion to the first NoMaD trajectory, rotates the complete
-trajectory away from obstacles, and publishes its avoidance command; velocity
-output remains disabled by default:
+Run target-directed CARE exploration after starting either the keyboard or
+controller `cmd_dir` publisher above. The direction-conditioned NoMaD
+checkpoint from `config/nomad.yaml` generates trajectories for straight, left,
+or right. CARE selects their mean by default, applies APF repulsion to that
+trajectory, and publishes its avoidance command. Velocity output remains
+disabled by default, and the robot stops if the direction command or obstacle
+cloud is missing or stale:
 
 ```bash
 roslaunch vnm_ros care_navigation.launch
@@ -128,19 +130,26 @@ The depth node publishes bin-selected CARE obstacles on
 `/unidepth/obstacle_points` and all filtered points on
 `/unidepth/obstacle_points_all`, both in `base_footprint`. The CARE
 BEV draws all points in gray and the bin-selected CARE input in red, together
-with `/vnm/action_candidates`. The selected path is yellow during normal
+with `/vnm/action_candidates`. It also shows the current target direction. The
+selected path is yellow during normal
 navigation and changes to magenta while CARE is applying avoidance rotation.
 The default view is forward 1.2 m by lateral
 3 m (-1.5 to +1.5 m), using the same pixels-per-metre scale on both axes. The result is
 published as an image on `/vnm/care_bev`. Set `start_navigation:=false` or
 `start_depth_estimator:=false` when those nodes are already running.
 
-Avoidance parameters are under `avoidance` in `config/care.yaml`. Following the
+The NoMaD base trajectory is selected with
+`avoidance.base_action_strategy: mean` or `first` in `config/care.yaml`.
+Following the
 CARE paper, the module finds the waypoint with the strongest inverse-distance
 repulsive force, clips the trajectory rotation to 45 degrees, and uses the
 Safe-FOV rule to suppress forward velocity above a 30-degree desired heading.
 It publishes a zero trajectory when `require_obstacle_data: true` and the point
 cloud is missing or stale.
+
+`care_navigation.launch` uses `model.checkpoint_path` from `config/nomad.yaml`
+instead of the official goal-free pretrained checkpoint because CARE now
+requires a direction-conditioned model.
 
 Both launch files use the same files under `config/`. Set `publish_cmd_vel:
 false` in `config/runtime.yaml` for model testing without moving the robot, or

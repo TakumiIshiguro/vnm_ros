@@ -4,6 +4,13 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 
+TARGET_DIRECTION_NAMES = {
+    0: "straight",
+    1: "left",
+    2: "right",
+}
+
+
 def decode_action_candidates(data: Sequence[float]) -> Optional[Dict]:
     """Decode the compact Float32MultiArray representation used by vnm_node."""
     if len(data) < 5:
@@ -23,11 +30,16 @@ def decode_action_candidates(data: Sequence[float]) -> Optional[Dict]:
     if not np.isfinite(values).all():
         return None
     actions = values.reshape(sample_count, horizon, dimensions)
+    target_direction = int(data[expected + 1]) if len(data) > expected + 1 else -1
     return {
         "selected": max(0, min(selected, sample_count - 1)),
         "waypoint_index": max(0, min(waypoint_index, horizon - 1)),
         "actions": actions,
         "avoidance_active": bool(data[expected]) if len(data) > expected else False,
+        "target_direction": TARGET_DIRECTION_NAMES.get(
+            target_direction,
+            "none",
+        ),
     }
 
 
@@ -174,6 +186,7 @@ def render_care_bev(
     candidate_count = 0
     selected_index = -1
     avoidance_active = False
+    target_direction = "none"
     if candidates is not None:
         actions = np.asarray(candidates.get("actions", []), dtype=np.float32)
         if (
@@ -195,6 +208,7 @@ def render_care_bev(
             min(int(candidates.get("waypoint_index", 0)), actions.shape[1] - 1),
         )
         avoidance_active = bool(candidates.get("avoidance_active", False))
+        target_direction = str(candidates.get("target_direction", "none"))
         origin = point((0.0, 0.0))
         for index, action in enumerate(actions):
             pixels = [origin] + [point(waypoint[:2]) for waypoint in action]
@@ -237,6 +251,7 @@ def render_care_bev(
         (plot[0] + 8, plot[1] + 8),
         f"all={visible_all_obstacles}  CARE bins={visible_obstacles}  "
         f"candidates={candidate_count}  selected={selected_index}  "
+        f"target={target_direction}  "
         f"avoidance={'on' if avoidance_active else 'off'}",
         fill=(20, 25, 30),
     )

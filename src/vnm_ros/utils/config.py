@@ -137,6 +137,7 @@ def load_care_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
     runtime = dict(care.get("runtime", {}))
     map_config = dict(care.get("map", {}))
     avoidance = dict(care.get("avoidance", {}))
+    target_direction = dict(care.get("target_direction", {}))
     topics = load_yaml(os.path.join(config_dir, "topics.yaml"))
 
     runtime["rate"] = float(runtime.get("rate", 0.0))
@@ -191,6 +192,13 @@ def load_care_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
         raise ValueError(
             "care avoidance.waypoint_index must be non-negative"
         )
+    avoidance["base_action_strategy"] = str(
+        avoidance.get("base_action_strategy", "mean")
+    ).strip().lower()
+    if avoidance["base_action_strategy"] not in ("mean", "first"):
+        raise ValueError(
+            "care avoidance.base_action_strategy must be mean or first"
+        )
     for key, default in (
         ("maximum_forward_range_m", 1.5),
         ("path_influence_radius_m", 0.40),
@@ -235,7 +243,16 @@ def load_care_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
             "and no greater than theta_clip_degrees"
         )
 
+    target_direction["stale_timeout_seconds"] = float(
+        target_direction.get("stale_timeout_seconds", 0.0)
+    )
+    if target_direction["stale_timeout_seconds"] <= 0.0:
+        raise ValueError(
+            "care target_direction.stale_timeout_seconds must be positive"
+        )
+
     required_topics = (
+        "cmd_dir_topic",
         "action_candidates_topic",
         "obstacle_points_topic",
         "all_obstacle_points_topic",
@@ -248,5 +265,6 @@ def load_care_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
         "runtime": runtime,
         "map": map_config,
         "avoidance": avoidance,
+        "target_direction": target_direction,
         "topics": topics,
     }

@@ -14,6 +14,9 @@ avoidance:
   require_obstacle_data: true
   num_action_samples: 8
   waypoint_index: 1
+  # Select the target-conditioned NoMaD trajectory before CARE adjustment.
+  # Supported values: mean, first.
+  base_action_strategy: mean
   maximum_forward_range_m: 1.0
   # Narrowest corridor has walls about 0.50 m from the centerline.
   # Use the 0.30 m robot half-width plus a 0.10 m safety margin.
@@ -26,3 +29,7 @@ avoidance:
   force_balance_ratio_threshold: 0.30
   theta_clip_degrees: 45.0
   safe_fov_threshold_degrees: 30.0
+
+target_direction:
+  # Stop when /cmd_dir_intersection is missing or no longer being published.
+  stale_timeout_seconds: 0.5

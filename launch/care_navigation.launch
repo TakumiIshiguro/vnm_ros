@@ -3,7 +3,8 @@
   <arg name="unidepth_config_file" default="$(find unidepth_ros)/config/unidepth.yaml"/>
   <arg name="start_navigation" default="true"/>
   <arg name="start_depth_estimator" default="true"/>
-  <arg name="use_pretrained_weights" default="true"/>
+  <!-- Target-directed CARE requires the direction-conditioned checkpoint from nomad.yaml. -->
+  <arg name="use_pretrained_weights" default="false"/>
   <arg name="checkpoint_path_override" default=""/>
   <arg name="publish_cmd_vel" default="false"/>
   <arg name="device_override" default=""/>
@@ -14,7 +15,7 @@
     <arg name="checkpoint_path_override" value="$(arg checkpoint_path_override)"/>
     <arg name="publish_cmd_vel_override" value="$(arg publish_cmd_vel)"/>
     <arg name="navigation_mode_override" value="explore"/>
-    <arg name="direction_conditioning_override" value="false"/>
+    <arg name="direction_conditioning_override" value="true"/>
     <arg name="action_sample_strategy_override" value="care"/>
   </include>
 

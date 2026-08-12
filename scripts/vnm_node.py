@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
@@ -12,7 +13,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
 from visualization_msgs.msg import Marker
 
-from vnm_ros.care import CareRepulsiveAdjuster
+from vnm_ros.care import CareRepulsiveAdjuster, select_base_action
 from vnm_ros.control.cmd_dir_action_selector import CmdDirActionSelector
 from vnm_ros.control.waypoint_controller import WaypointController
 from vnm_ros.models.vnm_model import VNMModel
@@ -54,6 +55,11 @@ def cmd_dir_name(cmd_dir):
     if np.count_nonzero(cmd_dir > 0) != 1:
         return "none"
     return ["straight", "left", "right"][int(np.argmax(cmd_dir))]
+
+
+def cmd_dir_index(cmd_dir):
+    name = cmd_dir_name(cmd_dir)
+    return {"straight": 0, "left": 1, "right": 2}.get(name, -1)
 
 
 def delete_waypoint_marker(frame_id):
@@ -134,9 +140,14 @@ def main():
             raise ValueError(
                 "action_sample_strategy=care requires NoMaD exploration mode"
             )
-        # CARE uses the official goal-masked NoMaD condition. Obstacle costs,
-        # rather than a target direction token, choose the sampled action.
-        model_cfg["direction_conditioning"] = False
+        # Target direction is handled by the trained NoMaD condition. CARE is
+        # applied afterwards and is responsible only for obstacle avoidance.
+        model_cfg["direction_conditioning"] = True
+        if use_pretrained_weights and not checkpoint_override:
+            raise ValueError(
+                "target-directed CARE requires a direction-conditioned "
+                "checkpoint; use_pretrained_weights must be false"
+            )
         care_cfg = load_care_config(config_dir)
         model_cfg["num_action_samples"] = care_cfg["avoidance"][
             "num_action_samples"
@@ -147,7 +158,11 @@ def main():
 
     checkpoint = resolve_path(checkpoint, package_root())
     model = VNMModel(model_cfg, checkpoint)
-    use_cmd_dir_input = bool(model_cfg.get("direction_conditioning", False)) or select_by_cmd_dir
+    use_cmd_dir_input = (
+        bool(model_cfg.get("direction_conditioning", False))
+        or select_by_cmd_dir
+        or select_by_care
+    )
     if navigation_mode == "explore" and not (
         model_cfg["model_type"] == "nomad"
         or bool(model_cfg.get("direction_conditioning", False))
@@ -176,9 +191,17 @@ def main():
         )
 
     image_sub = ImageContextSubscriber(topics["image_topic"], model.context_size)
-    action_selector = CmdDirActionSelector(
-        theta_threshold_deg=float(model_cfg.get("cmd_dir_theta_threshold_deg", 15.0))
+    action_selector = (
+        CmdDirActionSelector(
+            theta_threshold_deg=float(
+                model_cfg.get("cmd_dir_theta_threshold_deg", 15.0)
+            )
+        )
+        if select_by_cmd_dir
+        else None
     )
+    latest_cmd_dir = [None]
+    last_cmd_dir_receipt = [None]
     care_adjuster = None
     obstacle_subscriber = None
     if select_by_care:
@@ -207,10 +230,17 @@ def main():
             care_cfg["runtime"]["robot_frame"],
         )
     if navigation_mode == "explore" and use_cmd_dir_input:
+        def update_cmd_dir(message):
+            latest_cmd_dir[0] = np.asarray(
+                message.cmd_dir,
+                dtype=np.int8,
+            ).reshape(-1)
+            last_cmd_dir_receipt[0] = time.monotonic()
+
         rospy.Subscriber(
             topics["cmd_dir_topic"],
             cmd_dir_intersection,
-            lambda msg: action_selector.update(msg.cmd_dir),
+            update_cmd_dir,
             queue_size=1,
         )
     waypoint_pub = rospy.Publisher(
@@ -264,8 +294,9 @@ def main():
         info(f"action_sample_strategy={action_sample_strategy}")
         if select_by_care:
             info(
-                "CARE goal-free exploration enabled: direction_conditioning=false "
+                "CARE target-directed exploration enabled: direction_conditioning=true "
                 f"samples={model_cfg['num_action_samples']} "
+                f"base_action={care_cfg['avoidance']['base_action_strategy']} "
                 f"waypoint_index={waypoint_index} "
                 f"forward_range={care_adjuster.maximum_forward_range_m:.3f}m "
                 f"path_radius={care_adjuster.path_influence_radius_m:.3f}m "
@@ -276,6 +307,7 @@ def main():
             )
         if use_cmd_dir_input:
             info(f"direction_conditioning={model_cfg.get('direction_conditioning', False)}")
+        if select_by_cmd_dir:
             info(
                 f"cmd_dir_theta_threshold_deg="
                 f"{model_cfg.get('cmd_dir_theta_threshold_deg', 15.0)}"
@@ -292,10 +324,25 @@ def main():
         if subgoal_selector is not None:
             reached = subgoal_selector.reached_goal()
 
-        if navigation_mode == "explore" and use_cmd_dir_input and action_selector.cmd_dir is None:
+        cmd_dir = latest_cmd_dir[0] if use_cmd_dir_input else None
+        cmd_dir_unavailable_reason = None
+        if navigation_mode == "explore" and use_cmd_dir_input:
+            if cmd_dir is None:
+                cmd_dir_unavailable_reason = "missing"
+            elif select_by_care and cmd_dir_name(cmd_dir) == "none":
+                cmd_dir_unavailable_reason = "invalid"
+            elif select_by_care and (
+                last_cmd_dir_receipt[0] is None
+                or time.monotonic() - last_cmd_dir_receipt[0]
+                > care_cfg["target_direction"]["stale_timeout_seconds"]
+            ):
+                cmd_dir_unavailable_reason = "stale"
+
+        if cmd_dir_unavailable_reason is not None:
             if not waiting_for_cmd_dir_logged:
                 info(
-                    "waiting for target direction cmd_dir; "
+                    "waiting for valid target direction cmd_dir "
+                    f"({cmd_dir_unavailable_reason}); "
                     "VNM will not publish motion commands until it is received"
                 )
                 waiting_for_cmd_dir_logged = True
@@ -311,12 +358,23 @@ def main():
             care_rotate_in_place = False
             care_avoidance_active = False
             if navigation_mode == "explore":
-                cmd_dir = action_selector.cmd_dir if use_cmd_dir_input else None
                 target_name = cmd_dir_name(cmd_dir)
                 actions = model.predict_explore(image_sub.context(), cmd_dir=cmd_dir)
                 if select_by_care:
+                    base_action_strategy = care_cfg["avoidance"][
+                        "base_action_strategy"
+                    ]
+                    base_action = select_base_action(
+                        actions,
+                        base_action_strategy,
+                    )
                     actions = model.scale_waypoint(
                         actions,
+                        max_v=float(robot["max_v"]),
+                        model_rate=float(robot["model_rate"]),
+                    )
+                    base_action = model.scale_waypoint(
+                        base_action,
                         max_v=float(robot["max_v"]),
                         model_rate=float(robot["model_rate"]),
                     )
@@ -328,7 +386,7 @@ def main():
                         and care_cfg["avoidance"]["require_obstacle_data"]
                     ):
                         care_adjustment = care_adjuster.stop(
-                            actions[0],
+                            base_action,
                             "obstacle_data_missing_or_stale",
                         )
                     else:
@@ -338,7 +396,7 @@ def main():
                                 dtype=np.float32,
                             )
                         care_adjustment = care_adjuster.adjust(
-                            actions[0],
+                            base_action,
                             obstacle_points,
                         )
                     selected_action = care_adjustment.action
@@ -349,7 +407,14 @@ def main():
                     )
                     waypoint = selected_action[selected_waypoint_index]
                     display_actions = actions
-                    display_selected_sample = 0
+                    if base_action_strategy == "mean":
+                        display_actions = np.concatenate(
+                            (display_actions, base_action[np.newaxis, :, :]),
+                            axis=0,
+                        )
+                        display_selected_sample = display_actions.shape[0] - 1
+                    else:
+                        display_selected_sample = 0
                     action_was_adjusted = (
                         care_adjustment.stopped
                         or abs(care_adjustment.rotation_angle) > 1e-8
@@ -361,7 +426,7 @@ def main():
                     if action_was_adjusted:
                         display_actions = np.concatenate(
                             (
-                                actions,
+                                display_actions,
                                 selected_action[np.newaxis, :, :],
                             ),
                             axis=0,
@@ -373,7 +438,8 @@ def main():
                         else str(care_adjustment.strongest_waypoint_index)
                     )
                     info(
-                        "target_dir=none mode=care "
+                        f"target_dir={target_name} mode=care "
+                        f"base_action={base_action_strategy} "
                         f"selected_sample={display_selected_sample} "
                         f"rotation={np.rad2deg(care_adjustment.rotation_angle):.1f}deg "
                         f"balance_ratio={care_adjustment.force_balance_ratio:.3f} "
@@ -386,6 +452,7 @@ def main():
                         f"{float(waypoint[1]):.3f})"
                     )
                 elif select_by_cmd_dir:
+                    action_selector.update(cmd_dir)
                     waypoint = action_selector.select(actions, waypoint_index)
                     selected_action = action_selector.selected_action
                     selected_sample = action_selector.selected_sample
@@ -438,6 +505,7 @@ def main():
                         selected_sample=display_selected_sample,
                         waypoint_index=selected_waypoint_index,
                         avoidance_active=care_avoidance_active,
+                        target_direction=cmd_dir_index(cmd_dir),
                     )
                 )
             else:

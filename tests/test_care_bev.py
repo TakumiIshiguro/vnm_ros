@@ -29,16 +29,18 @@ def test_decode_action_candidates_restores_shape_and_selection():
     assert decoded["selected"] == 1
     assert decoded["waypoint_index"] == 0
     assert decoded["avoidance_active"] is False
+    assert decoded["target_direction"] == "none"
     assert decoded["actions"].shape == (2, 2, 2)
     np.testing.assert_allclose(decoded["actions"][1, 1], [0.2, -0.1])
 
 
 def test_decode_action_candidates_reads_appended_avoidance_state():
-    data = [0, 0, 1, 1, 2, 0.2, 0.0, 1]
+    data = [0, 0, 1, 1, 2, 0.2, 0.0, 1, 2]
 
     decoded = decode_action_candidates(data)
 
     assert decoded["avoidance_active"] is True
+    assert decoded["target_direction"] == "right"
 
 
 @pytest.mark.parametrize(
@@ -126,6 +128,7 @@ def test_default_care_config_uses_shared_robot_frame_and_topics():
         "require_obstacle_data": True,
         "num_action_samples": 8,
         "waypoint_index": 1,
+        "base_action_strategy": "mean",
         "maximum_forward_range_m": 1.0,
         "path_influence_radius_m": 0.40,
         "depth_offset_m": 0.0,
@@ -133,6 +136,9 @@ def test_default_care_config_uses_shared_robot_frame_and_topics():
         "force_balance_ratio_threshold": 0.30,
         "theta_clip_degrees": 45.0,
         "safe_fov_threshold_degrees": 30.0,
+    }
+    assert config["target_direction"] == {
+        "stale_timeout_seconds": 0.5,
     }
     assert (
         config["topics"]["obstacle_points_topic"]

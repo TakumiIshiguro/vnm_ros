@@ -17,6 +17,7 @@ def action_candidates_msg(
     selected_sample: int,
     waypoint_index: int,
     avoidance_active: bool = False,
+    target_direction: int = -1,
 ) -> Float32MultiArray:
     msg = Float32MultiArray()
     sample_count = len(actions)
@@ -35,7 +36,10 @@ def action_candidates_msg(
             values.extend(map(float, waypoint))
     # Append optional state after the trajectory payload so older decoders,
     # which read exactly the expected payload length, remain compatible.
-    msg.data = header + values + [float(bool(avoidance_active))]
+    msg.data = header + values + [
+        float(bool(avoidance_active)),
+        float(target_direction),
+    ]
     return msg
 
 
