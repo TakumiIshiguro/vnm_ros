@@ -121,12 +121,12 @@ roslaunch vnm_ros care_visualization.launch
 ```
 
 This launch opens both the CARE BEV and the colorized UniDepthV2 metric-depth image from
-`/corridor_classifier/depth_color`. Set `show_depth_image:=false` to hide only
+`/unidepth/depth_color`. Set `show_depth_image:=false` to hide only
 the depth window.
 
 The depth node publishes bin-selected CARE obstacles on
-`/corridor_classifier/obstacle_points` and all filtered points on
-`/corridor_classifier/obstacle_points_all`, both in `base_footprint`. The CARE
+`/unidepth/obstacle_points` and all filtered points on
+`/unidepth/obstacle_points_all`, both in `base_footprint`. The CARE
 BEV draws all points in gray and the bin-selected CARE input in red, together
 with `/vnm/action_candidates`. The selected path is yellow during normal
 navigation and changes to magenta while CARE is applying avoidance rotation.

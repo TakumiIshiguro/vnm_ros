@@ -136,10 +136,10 @@ def test_default_care_config_uses_shared_robot_frame_and_topics():
     }
     assert (
         config["topics"]["obstacle_points_topic"]
-        == "/corridor_classifier/obstacle_points"
+        == "/unidepth/obstacle_points"
     )
     assert (
         config["topics"]["all_obstacle_points_topic"]
-        == "/corridor_classifier/obstacle_points_all"
+        == "/unidepth/obstacle_points_all"
     )
     assert config["topics"]["care_bev_topic"] == "/vnm/care_bev"
