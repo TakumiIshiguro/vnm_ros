@@ -6,6 +6,7 @@ import torch
 import yaml
 
 from vnm_ros.models.model_loader import checkpoint_state_dict
+from vnm_ros.models.model_loader import build_model
 from vnm_ros.models.nomad_model import DirectionEncoder, NoMaDViNT
 from vnm_ros.training.checkpoint import load_training_checkpoint, save_checkpoint
 
@@ -151,6 +152,74 @@ class NoMaDPretrainingTest(unittest.TestCase):
             atol=1e-5,
             rtol=1e-5,
         )
+
+    def test_normalized_residual_has_fixed_norm(self):
+        torch.manual_seed(0)
+        direction_scale = 0.5
+        conditioned = NoMaDViNT(
+            context_size=1,
+            obs_encoding_size=32,
+            mha_num_attention_heads=4,
+            mha_num_attention_layers=1,
+            direction_encoder=DirectionEncoder(
+                embedding_dim=32,
+                hidden_dim=8,
+                latent_dim=4,
+            ),
+            direction_conditioning_mode="residual",
+            direction_scale=direction_scale,
+            direction_normalize=True,
+        ).eval()
+        observation = torch.randn(3, 6, 32, 32)
+        goal = torch.randn(3, 3, 32, 32)
+        commands = torch.eye(3)
+
+        with torch.no_grad():
+            conditioned.direction_scale = 0.0
+            base = conditioned(
+                observation,
+                goal,
+                cmd_dir=commands,
+            )
+            conditioned.direction_scale = direction_scale
+            actual = conditioned(
+                observation,
+                goal,
+                cmd_dir=commands,
+            )
+
+        residual_norm = torch.linalg.vector_norm(actual - base, dim=-1)
+        torch.testing.assert_close(
+            residual_norm,
+            torch.full_like(residual_norm, direction_scale),
+            atol=1e-5,
+            rtol=1e-5,
+        )
+
+    def test_normalized_residual_builder_does_not_zero_initialize_output(self):
+        config = {
+            "model_type": "nomad",
+            "context_size": 1,
+            "obs_encoder": "efficientnet-b0",
+            "encoding_size": 32,
+            "mha_num_attention_heads": 4,
+            "mha_num_attention_layers": 1,
+            "mha_ff_dim_factor": 4,
+            "direction_conditioning": True,
+            "direction_conditioning_mode": "residual",
+            "direction_normalize": True,
+            "direction_scale": 0.5,
+            "direction_num_commands": 3,
+            "direction_hidden_dim": 8,
+            "direction_latent_dim": 4,
+            "down_dims": [8, 16],
+            "cond_predict_scale": False,
+        }
+
+        model = build_model(config)
+        output_layer = model.vision_encoder.direction_encoder.projector[-1]
+
+        self.assertGreater(torch.linalg.vector_norm(output_layer.weight), 0.0)
 
     def test_rejects_invalid_direction_scale(self):
         with self.assertRaisesRegex(ValueError, "direction_scale"):

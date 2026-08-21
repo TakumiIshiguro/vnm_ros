@@ -102,6 +102,62 @@ class NoMaDActionScalingTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "direction conditioning mismatch"):
             validate_checkpoint_action_scale(checkpoint, config, "token.pth")
 
+    def test_rejects_direction_normalization_mismatch(self):
+        checkpoint = {
+            "config": {
+                "model": {
+                    "model_type": "nomad",
+                    "normalize": True,
+                    "direction_conditioning": True,
+                    "direction_conditioning_mode": "residual",
+                    "direction_normalize": False,
+                }
+            }
+        }
+        config = {
+            "model_type": "nomad",
+            "normalize": True,
+            "direction_conditioning": True,
+            "direction_conditioning_mode": "residual",
+            "direction_normalize": True,
+        }
+
+        with self.assertRaisesRegex(ValueError, "normalization mismatch"):
+            validate_checkpoint_action_scale(
+                checkpoint,
+                config,
+                "residual.pth",
+            )
+
+    def test_rejects_direction_scale_mismatch(self):
+        checkpoint = {
+            "config": {
+                "model": {
+                    "model_type": "nomad",
+                    "normalize": True,
+                    "direction_conditioning": True,
+                    "direction_conditioning_mode": "residual",
+                    "direction_normalize": True,
+                    "direction_scale": 36.0,
+                }
+            }
+        }
+        config = {
+            "model_type": "nomad",
+            "normalize": True,
+            "direction_conditioning": True,
+            "direction_conditioning_mode": "residual",
+            "direction_normalize": True,
+            "direction_scale": 24.0,
+        }
+
+        with self.assertRaisesRegex(ValueError, "direction scale mismatch"):
+            validate_checkpoint_action_scale(
+                checkpoint,
+                config,
+                "fixed-residual.pth",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

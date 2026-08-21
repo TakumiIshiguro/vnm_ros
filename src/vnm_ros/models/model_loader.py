@@ -1,3 +1,4 @@
+import math
 from typing import Callable, Dict
 
 from vnm_ros.models.gnm_model import GNM
@@ -71,6 +72,33 @@ def _validate_checkpoint_direction_mode(
         checkpoint_model.get("direction_conditioning_mode", "token")
     )
     if checkpoint_mode == configured_mode:
+        checkpoint_normalize = bool(
+            checkpoint_model.get("direction_normalize", False)
+        )
+        configured_normalize = bool(config.get("direction_normalize", False))
+        label = checkpoint_path or "checkpoint"
+        if checkpoint_normalize != configured_normalize:
+            raise ValueError(
+                f"{label}: NoMaD direction normalization mismatch: checkpoint "
+                f"direction_normalize={checkpoint_normalize}, configured "
+                f"direction_normalize={configured_normalize}. Use the matching "
+                "setting or retrain from the official pretrained weights."
+            )
+        if checkpoint_mode == "residual":
+            checkpoint_scale = float(checkpoint_model.get("direction_scale", 1.0))
+            configured_scale = float(config.get("direction_scale", 1.0))
+            if not math.isclose(
+                checkpoint_scale,
+                configured_scale,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                raise ValueError(
+                    f"{label}: NoMaD direction scale mismatch: checkpoint "
+                    f"direction_scale={checkpoint_scale}, configured "
+                    f"direction_scale={configured_scale}. Use the scale stored "
+                    "with the checkpoint."
+                )
         return
     label = checkpoint_path or "checkpoint"
     raise ValueError(
@@ -137,6 +165,7 @@ def _build_nomad(config: Dict):
     encoding_size = int(config.get("encoding_size", config.get("obs_encoding_size", 256)))
     direction_encoder = None
     direction_mode = str(config.get("direction_conditioning_mode", "token"))
+    direction_normalize = bool(config.get("direction_normalize", False))
     if bool(config.get("direction_conditioning", False)):
         if direction_mode not in ("token", "residual"):
             raise ValueError(
@@ -147,7 +176,9 @@ def _build_nomad(config: Dict):
             input_dim=int(config.get("direction_num_commands", 3)),
             hidden_dim=int(config.get("direction_hidden_dim", 64)),
             latent_dim=int(config.get("direction_latent_dim", 64)),
-            zero_init_output=direction_mode == "residual",
+            zero_init_output=(
+                direction_mode == "residual" and not direction_normalize
+            ),
         )
     vision_encoder = NoMaDViNT(
         context_size=int(config["context_size"]),
@@ -159,6 +190,7 @@ def _build_nomad(config: Dict):
         direction_encoder=direction_encoder,
         direction_conditioning_mode=direction_mode,
         direction_scale=float(config.get("direction_scale", 1.0)),
+        direction_normalize=direction_normalize,
     )
     noise_pred_net = build_conditional_unet1d(
         input_dim=2,

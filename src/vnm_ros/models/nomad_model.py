@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from efficientnet_pytorch import EfficientNet
 
 from vnm_ros.models.self_attention import PositionalEncoding
@@ -105,6 +106,7 @@ class NoMaDViNT(nn.Module):
         direction_encoder: Optional[nn.Module] = None,
         direction_conditioning_mode: str = "token",
         direction_scale: float = 1.0,
+        direction_normalize: bool = False,
     ) -> None:
         super().__init__()
         self.obs_encoding_size = obs_encoding_size
@@ -113,6 +115,7 @@ class NoMaDViNT(nn.Module):
         self.direction_encoder = direction_encoder
         self.direction_conditioning_mode = str(direction_conditioning_mode)
         self.direction_scale = float(direction_scale)
+        self.direction_normalize = bool(direction_normalize)
         if not math.isfinite(self.direction_scale) or self.direction_scale < 0.0:
             raise ValueError("direction_scale must be a finite non-negative value")
         if self.direction_encoder is not None and self.direction_conditioning_mode not in (
@@ -256,6 +259,12 @@ class NoMaDViNT(nn.Module):
             direction_encoding is not None
             and self.direction_conditioning_mode == "residual"
         ):
+            if self.direction_normalize:
+                direction_encoding = F.normalize(
+                    direction_encoding,
+                    p=2.0,
+                    dim=-1,
+                )
             obsgoal_cond = (
                 obsgoal_cond
                 + self.direction_scale * direction_encoding.squeeze(1)
