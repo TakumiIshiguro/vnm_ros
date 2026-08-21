@@ -159,5 +159,59 @@ class NoMaDActionScalingTest(unittest.TestCase):
             )
 
 
+    def test_accepts_learnable_scale_checkpoint_without_exact_scale_match(self):
+        checkpoint = {
+            "config": {
+                "model": {
+                    "model_type": "nomad",
+                    "normalize": True,
+                    "direction_conditioning": True,
+                    "direction_conditioning_mode": "residual",
+                    "direction_normalize": True,
+                    "direction_scale": 4.0,
+                    "direction_scale_learnable": True,
+                }
+            }
+        }
+        config = {
+            "model_type": "nomad",
+            "normalize": True,
+            "direction_conditioning": True,
+            "direction_conditioning_mode": "residual",
+            "direction_normalize": True,
+            "direction_scale": 4.0,
+            "direction_scale_learnable": True,
+        }
+
+        validate_checkpoint_action_scale(checkpoint, config, "learnable.pth")
+
+    def test_rejects_learnable_scale_flag_mismatch(self):
+        checkpoint = {
+            "config": {
+                "model": {
+                    "model_type": "nomad",
+                    "normalize": True,
+                    "direction_conditioning": True,
+                    "direction_conditioning_mode": "residual",
+                    "direction_normalize": True,
+                    "direction_scale": 4.0,
+                    "direction_scale_learnable": True,
+                }
+            }
+        }
+        config = {
+            "model_type": "nomad",
+            "normalize": True,
+            "direction_conditioning": True,
+            "direction_conditioning_mode": "residual",
+            "direction_normalize": True,
+            "direction_scale": 4.0,
+            "direction_scale_learnable": False,
+        }
+
+        with self.assertRaisesRegex(ValueError, "direction scale mismatch"):
+            validate_checkpoint_action_scale(checkpoint, config, "mismatch.pth")
+
+
 if __name__ == "__main__":
     unittest.main()

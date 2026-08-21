@@ -85,20 +85,38 @@ def _validate_checkpoint_direction_mode(
                 "setting or retrain from the official pretrained weights."
             )
         if checkpoint_mode == "residual":
-            checkpoint_scale = float(checkpoint_model.get("direction_scale", 1.0))
-            configured_scale = float(config.get("direction_scale", 1.0))
-            if not math.isclose(
-                checkpoint_scale,
-                configured_scale,
-                rel_tol=0.0,
-                abs_tol=1e-12,
-            ):
+            checkpoint_learnable = bool(
+                checkpoint_model.get("direction_scale_learnable", False)
+            )
+            configured_learnable = bool(
+                config.get("direction_scale_learnable", False)
+            )
+            if checkpoint_learnable != configured_learnable:
                 raise ValueError(
                     f"{label}: NoMaD direction scale mismatch: checkpoint "
-                    f"direction_scale={checkpoint_scale}, configured "
-                    f"direction_scale={configured_scale}. Use the scale stored "
-                    "with the checkpoint."
+                    f"direction_scale_learnable={checkpoint_learnable}, "
+                    f"configured direction_scale_learnable={configured_learnable}. "
+                    "Use the setting stored with the checkpoint."
                 )
+            # When the scale is learnable, its trained value lives in the
+            # checkpoint's state_dict (raw_scale), so there is nothing further
+            # to compare here. When it is fixed, it must match exactly since
+            # it is not part of the state_dict.
+            if not checkpoint_learnable:
+                checkpoint_scale = float(checkpoint_model.get("direction_scale", 1.0))
+                configured_scale = float(config.get("direction_scale", 1.0))
+                if not math.isclose(
+                    checkpoint_scale,
+                    configured_scale,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                ):
+                    raise ValueError(
+                        f"{label}: NoMaD direction scale mismatch: checkpoint "
+                        f"direction_scale={checkpoint_scale}, configured "
+                        f"direction_scale={configured_scale}. Use the scale "
+                        "stored with the checkpoint."
+                    )
         return
     label = checkpoint_path or "checkpoint"
     raise ValueError(
@@ -166,6 +184,7 @@ def _build_nomad(config: Dict):
     direction_encoder = None
     direction_mode = str(config.get("direction_conditioning_mode", "token"))
     direction_normalize = bool(config.get("direction_normalize", False))
+    direction_scale_learnable = bool(config.get("direction_scale_learnable", False))
     if bool(config.get("direction_conditioning", False)):
         if direction_mode not in ("token", "residual"):
             raise ValueError(
@@ -179,6 +198,8 @@ def _build_nomad(config: Dict):
             zero_init_output=(
                 direction_mode == "residual" and not direction_normalize
             ),
+            learnable_scale=(direction_mode == "residual" and direction_scale_learnable),
+            initial_scale=float(config.get("direction_scale", 1.0)),
         )
     vision_encoder = NoMaDViNT(
         context_size=int(config["context_size"]),

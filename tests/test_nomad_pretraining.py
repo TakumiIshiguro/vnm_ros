@@ -237,6 +237,92 @@ class NoMaDPretrainingTest(unittest.TestCase):
                 direction_scale=-0.1,
             )
 
+    def test_learnable_scale_starts_at_initial_scale(self):
+        encoder = DirectionEncoder(
+            embedding_dim=32,
+            hidden_dim=8,
+            latent_dim=4,
+            learnable_scale=True,
+            initial_scale=4.0,
+        )
+
+        self.assertAlmostEqual(
+            encoder.effective_scale().item(), 4.0, places=5
+        )
+
+    def test_learnable_scale_rejects_nonpositive_initial_scale(self):
+        with self.assertRaisesRegex(ValueError, "initial_scale"):
+            DirectionEncoder(
+                embedding_dim=32,
+                hidden_dim=8,
+                latent_dim=4,
+                learnable_scale=True,
+                initial_scale=0.0,
+            )
+
+    def test_effective_scale_requires_learnable_scale(self):
+        encoder = DirectionEncoder(embedding_dim=32, hidden_dim=8, latent_dim=4)
+
+        with self.assertRaisesRegex(RuntimeError, "learnable_scale"):
+            encoder.effective_scale()
+
+    def test_learnable_scale_receives_gradients_from_residual_loss(self):
+        torch.manual_seed(0)
+        conditioned = NoMaDViNT(
+            context_size=1,
+            obs_encoding_size=32,
+            mha_num_attention_heads=4,
+            mha_num_attention_layers=1,
+            direction_encoder=DirectionEncoder(
+                embedding_dim=32,
+                hidden_dim=8,
+                latent_dim=4,
+                learnable_scale=True,
+                initial_scale=4.0,
+            ),
+            direction_conditioning_mode="residual",
+            direction_normalize=True,
+        )
+        observation = torch.randn(2, 6, 32, 32)
+        goal = torch.randn(2, 3, 32, 32)
+        left = torch.tensor([[0.0, 1.0, 0.0]]).repeat(2, 1)
+
+        output = conditioned(observation, goal, cmd_dir=left)
+        output.sum().backward()
+
+        raw_scale = conditioned.direction_encoder.raw_scale
+        self.assertIsNotNone(raw_scale.grad)
+        self.assertNotEqual(float(raw_scale.grad.abs().sum()), 0.0)
+
+    def test_builder_uses_learnable_scale_when_configured(self):
+        config = {
+            "model_type": "nomad",
+            "context_size": 1,
+            "obs_encoder": "efficientnet-b0",
+            "encoding_size": 32,
+            "mha_num_attention_heads": 4,
+            "mha_num_attention_layers": 1,
+            "mha_ff_dim_factor": 4,
+            "direction_conditioning": True,
+            "direction_conditioning_mode": "residual",
+            "direction_normalize": True,
+            "direction_scale": 4.0,
+            "direction_scale_learnable": True,
+            "direction_num_commands": 3,
+            "direction_hidden_dim": 8,
+            "direction_latent_dim": 4,
+            "down_dims": [8, 16],
+            "cond_predict_scale": False,
+        }
+
+        model = build_model(config)
+        direction_encoder = model.vision_encoder.direction_encoder
+
+        self.assertTrue(direction_encoder.learnable_scale)
+        self.assertAlmostEqual(
+            direction_encoder.effective_scale().item(), 4.0, places=5
+        )
+
     def test_checkpoint_uses_ema_for_inference_and_raw_model_for_resume(self):
         model = torch.nn.Linear(2, 1, bias=False)
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)

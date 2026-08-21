@@ -71,6 +71,8 @@ class DirectionEncoder(nn.Module):
         hidden_dim: int = 64,
         latent_dim: int = 64,
         zero_init_output: bool = False,
+        learnable_scale: bool = False,
+        initial_scale: float = 1.0,
     ):
         super().__init__()
         self.num_commands = input_dim
@@ -83,6 +85,25 @@ class DirectionEncoder(nn.Module):
         if zero_init_output:
             nn.init.zeros_(self.projector[-1].weight)
             nn.init.zeros_(self.projector[-1].bias)
+
+        self.learnable_scale = bool(learnable_scale)
+        self.raw_scale = None
+        if self.learnable_scale:
+            initial_scale = float(initial_scale)
+            if not math.isfinite(initial_scale) or initial_scale <= 0.0:
+                raise ValueError(
+                    "initial_scale must be a positive finite value when "
+                    "learnable_scale is enabled"
+                )
+            # Softplus^-1(initial_scale), so that effective_scale() starts
+            # exactly at initial_scale and stays positive under gradient steps.
+            raw_init = math.log(math.expm1(initial_scale))
+            self.raw_scale = nn.Parameter(torch.tensor(raw_init, dtype=torch.float32))
+
+    def effective_scale(self):
+        if not self.learnable_scale:
+            raise RuntimeError("effective_scale() requires learnable_scale=True")
+        return F.softplus(self.raw_scale)
 
     def forward(self, cmd_dir):
         if cmd_dir.ndim == 2 and cmd_dir.shape[-1] > 1:
@@ -265,9 +286,13 @@ class NoMaDViNT(nn.Module):
                     p=2.0,
                     dim=-1,
                 )
+            if getattr(self.direction_encoder, "learnable_scale", False):
+                scale = self.direction_encoder.effective_scale()
+            else:
+                scale = self.direction_scale
             obsgoal_cond = (
                 obsgoal_cond
-                + self.direction_scale * direction_encoding.squeeze(1)
+                + scale * direction_encoding.squeeze(1)
             )
         return obsgoal_cond
 
