@@ -19,7 +19,7 @@ model:
   context_type: temporal
   normalize: true
   waypoint_index: 2
-  checkpoint_path: weights/nomad/bags_all_train/fixed_residual_s36_long_best.pth
+  checkpoint_path: weights/nomad/bags_all_train/fixed_residual_learnable_scale_best.pth
   encoding_size: 256
   context_size: 3
   image_size: [96, 96]
@@ -29,9 +29,15 @@ model:
   down_dims: [64, 128, 256]
   direction_conditioning: true
   direction_conditioning_mode: residual
-  # Normalize the learned command vector, then add a fixed-L2-norm residual.
+  # Normalize the learned command vector, then add a residual whose gain is
+  # trained end-to-end instead of hand-picked (see direction_scale_learnable
+  # below). A hand-swept grid (s04..s36_long) showed held-out compliance and
+  # accuracy both highly sensitive to this gain, so it is no longer fixed.
   direction_normalize: true
-  direction_scale: 36.0
+  direction_scale_learnable: true
+  # Starting point only: the trained checkpoint's actual gain (~17.5) is
+  # stored in its state_dict and overrides this at load time.
+  direction_scale: 4.0
   direction_num_commands: 3
   direction_latent_dim: 64
   direction_hidden_dim: 64
@@ -65,7 +71,7 @@ collection:
   min_trajectory_samples: auto
 
 training:
-  model_name: "fixed_residual_s36_long"
+  model_name: "fixed_residual_learnable_scale"
   pretrained_weights_path: weights/nomad.pth
   freeze_dist_pred_net: true
   freeze_layers:
@@ -82,6 +88,11 @@ training:
   learning_rate: 0.00002
   layer_learning_rates:
     vision_encoder.direction_encoder: 0.0002
+    # The residual gain is a single scalar with no overfitting risk from a
+    # fast learning rate; it needs a much larger step size than the
+    # direction embedding/projector to actually move away from its init
+    # within a short fine-tuning schedule.
+    vision_encoder.direction_encoder.raw_scale: 0.05
   weight_decay: 0.0001
   alpha: 0.0
   gradient_clip: 1.0
