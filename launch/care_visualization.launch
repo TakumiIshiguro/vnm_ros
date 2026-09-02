@@ -7,7 +7,7 @@
   <arg name="show_depth_image" default="true"/>
   <arg name="use_pretrained_weights" default="false"/>
   <arg name="checkpoint_path_override" default=""/>
-  <arg name="publish_cmd_vel" default="false"/>
+  <arg name="publish_cmd_vel" default="true"/>
   <arg name="device_override" default=""/>
   <arg name="care_bev_topic" default="/vnm/care_bev"/>
   <arg name="depth_color_topic" default="/unidepth/depth_color"/>
