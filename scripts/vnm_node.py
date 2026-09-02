@@ -256,6 +256,14 @@ def main():
     reached_pub = rospy.Publisher(topics["reached_goal_topic"], Bool, queue_size=1)
     cmd_debug_pub = rospy.Publisher(topics["cmd_vel_debug_topic"], Twist, queue_size=1)
     cmd_pub = CmdVelPublisher(topics["cmd_vel_topic"])
+    # Lets consumers (e.g. corridor_classifier's turning gate) tell CARE's
+    # own obstacle-avoidance steering apart from a real scenario turn, since
+    # both can produce a large angular velocity on cmd_vel_topic.
+    care_avoidance_pub = rospy.Publisher(
+        topics.get("care_avoidance_active_topic", "/vnm/care_avoidance_active"),
+        Bool,
+        queue_size=1,
+    )
     controller = WaypointController(
         dt=1.0 / float(robot["model_rate"]),
         max_v=float(robot["max_v"]),
@@ -271,6 +279,7 @@ def main():
         marker_pub.publish(delete_waypoint_marker(topics["frame_id"]))
         cmd_debug_pub.publish(Twist())
         reached_pub.publish(Bool(data=False))
+        care_avoidance_pub.publish(Bool(data=False))
         if robot.get("publish_cmd_vel", True):
             cmd_pub.stop()
         info("reset VNM context and local path outputs")
@@ -347,6 +356,7 @@ def main():
                 )
                 waiting_for_cmd_dir_logged = True
             cmd_debug_pub.publish(Twist())
+            care_avoidance_pub.publish(Bool(data=False))
             if robot.get("publish_cmd_vel", True):
                 cmd_pub.stop()
             reached_pub.publish(Bool(data=False))
@@ -541,6 +551,7 @@ def main():
             cmd_debug.linear.x = v
             cmd_debug.angular.z = w
             cmd_debug_pub.publish(cmd_debug)
+            care_avoidance_pub.publish(Bool(data=care_avoidance_active))
 
             if robot.get("publish_cmd_vel", True):
                 cmd_pub.publish(v, w)
@@ -548,6 +559,7 @@ def main():
         reached_pub.publish(Bool(data=reached))
         if reached:
             cmd_debug_pub.publish(Twist())
+            care_avoidance_pub.publish(Bool(data=False))
         if reached and robot.get("publish_cmd_vel", True):
             cmd_pub.stop()
         if reached and not reached_logged:
