@@ -63,6 +63,13 @@ def make_dataset(config, model_cfg, dataset_type):
 def make_nomad_dataset(config, model_cfg, dataset_type):
     dataset = config["dataset"]
     data_dir = model_dataset_dir(dataset, dataset_type, model_cfg["model_type"])
+    # Augment the training split only; the held-out split must stay untouched
+    # so its metrics measure the model rather than the augmentation.
+    augmentation = (
+        config.get("training", {}).get("augmentation")
+        if dataset_type == "train"
+        else None
+    )
     return NoMaDDirectionDataset(
         data_dir=data_dir,
         image_size=model_cfg["image_size"],
@@ -73,6 +80,7 @@ def make_nomad_dataset(config, model_cfg, dataset_type):
         action_stats=model_cfg["action_stats"],
         normalize=bool(model_cfg.get("normalize", True)),
         center_crop=bool(model_cfg.get("image_center_crop", False)),
+        augmentation=augmentation,
     )
 
 

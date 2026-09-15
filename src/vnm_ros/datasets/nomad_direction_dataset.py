@@ -7,6 +7,7 @@ from vnm_ros.datasets.dataset_utils import (
     cmd_dir_one_hot,
     load_image,
     majority_cmd_dir_label,
+    sample_photometric_augmentation,
     to_local_coords,
 )
 from vnm_ros.datasets.trajectory_dataset import TrajectoryDataset
@@ -25,6 +26,7 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         normalize: bool = True,
         center_crop: bool = False,
         trajectory_names: Optional[Sequence[str]] = None,
+        augmentation: Optional[dict] = None,
     ):
         self.image_size = tuple(image_size)
         self.context_size = int(context_size)
@@ -37,6 +39,14 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         self.action_min = np.asarray(action_stats["min"], dtype=np.float32)
         self.action_max = np.asarray(action_stats["max"], dtype=np.float32)
         self.center_crop = bool(center_crop)
+        # Photometric augmentation, applied only when the caller passes a
+        # config (i.e. the training split). Drawn per frame rather than once
+        # per sample, matching corridor_classifier, whose production recipe
+        # leaves sequence_consistent off.
+        self.augmentation = dict(augmentation or {})
+        self.sequence_consistent_augmentation = bool(
+            self.augmentation.get("sequence_consistent", False)
+        )
         self.skipped_mixed_cmd_dir_samples = 0
         self.skipped_tied_cmd_dir_samples = 0
         self.relabelled_mixed_cmd_dir_samples = 0
@@ -108,12 +118,22 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         name, current = self.samples[index]
         trajectory = self.trajectory(name)
         context_indices = current + np.arange(-self.context_size, 1) * self.waypoint_spacing
+        sequence_photometric = (
+            sample_photometric_augmentation(self.augmentation)
+            if self.sequence_consistent_augmentation
+            else None
+        )
         observations = torch.cat(
             [
                 load_image(
                     self.image_path(name, int(i)),
                     self.image_size,
                     center_crop=self.center_crop,
+                    photometric=(
+                        sequence_photometric
+                        if self.sequence_consistent_augmentation
+                        else sample_photometric_augmentation(self.augmentation)
+                    ),
                 )
                 for i in context_indices
             ],

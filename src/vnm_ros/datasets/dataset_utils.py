@@ -1,13 +1,94 @@
 import math
 import os
-from typing import List, Sequence
+import random
+from typing import List, Optional, Sequence
 
 import numpy as np
 import torch
 from PIL import Image
+from torchvision import transforms
 from torchvision.transforms import functional as TF
 
 from vnm_ros.utils.image_utils import preprocess_image
+
+
+def sample_photometric_augmentation(augmentation: dict) -> Optional[dict]:
+    """Draw one set of photometric parameters, or None when disabled.
+
+    Mirrors corridor_classifier's dataset augmentation so the two packages
+    apply the same operations with the same meaning: a ColorJitter draw (with
+    its randomised operation order), then optional grayscale, then optional
+    Gaussian blur.
+    """
+    if not augmentation:
+        return None
+    jitter = augmentation.get("color_jitter") or {}
+    brightness = float(jitter.get("brightness", 0.0))
+    contrast = float(jitter.get("contrast", 0.0))
+    saturation = float(jitter.get("saturation", 0.0))
+    hue = float(jitter.get("hue", 0.0))
+    grayscale_probability = float(augmentation.get("grayscale_probability", 0.0))
+    blur_probability = float(augmentation.get("blur_probability", 0.0))
+    if (
+        brightness <= 0.0
+        and contrast <= 0.0
+        and saturation <= 0.0
+        and hue <= 0.0
+        and grayscale_probability <= 0.0
+        and blur_probability <= 0.0
+    ):
+        return None
+    color_jitter = transforms.ColorJitter(
+        brightness=brightness,
+        contrast=contrast,
+        saturation=saturation,
+        hue=hue,
+    )
+    fn_indices, jitter_brightness, jitter_contrast, jitter_saturation, jitter_hue = (
+        transforms.ColorJitter.get_params(
+            color_jitter.brightness,
+            color_jitter.contrast,
+            color_jitter.saturation,
+            color_jitter.hue,
+        )
+    )
+    return {
+        "fn_indices": tuple(int(index) for index in fn_indices),
+        "brightness": jitter_brightness,
+        "contrast": jitter_contrast,
+        "saturation": jitter_saturation,
+        "hue": jitter_hue,
+        "grayscale": random.random() < grayscale_probability,
+        "blur_sigma": (
+            random.uniform(0.1, 2.0)
+            if random.random() < blur_probability
+            else None
+        ),
+    }
+
+
+def apply_photometric_augmentation(
+    image: Image.Image,
+    parameters: Optional[dict],
+) -> Image.Image:
+    if not parameters:
+        return image
+    operations = (
+        (TF.adjust_brightness, parameters["brightness"]),
+        (TF.adjust_contrast, parameters["contrast"]),
+        (TF.adjust_saturation, parameters["saturation"]),
+        (TF.adjust_hue, parameters["hue"]),
+    )
+    for index in parameters["fn_indices"]:
+        operation, value = operations[index]
+        if value is not None:
+            image = operation(image, value)
+    if parameters["grayscale"]:
+        image = TF.rgb_to_grayscale(image, num_output_channels=3)
+    if parameters["blur_sigma"] is not None:
+        sigma = float(parameters["blur_sigma"])
+        image = TF.gaussian_blur(image, kernel_size=[3, 3], sigma=[sigma, sigma])
+    return image
 
 
 def numeric_image_files(directory: str) -> List[str]:
@@ -23,9 +104,11 @@ def load_image(
     path: str,
     image_size: Sequence[int],
     center_crop: bool = False,
+    photometric: Optional[dict] = None,
 ) -> torch.Tensor:
     image = Image.open(path).convert("RGB")
     image = preprocess_image(image, image_size, center_crop=center_crop)
+    image = apply_photometric_augmentation(image, photometric)
     return TF.to_tensor(image)
 
 
