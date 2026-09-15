@@ -1,0 +1,95 @@
+seed: 0
+device: auto
+paths:
+  dataset:
+    train_data_dir: dataset/real/
+model:
+  device: auto
+  model_type: nomad
+  image_center_crop: false
+  obs_encoder: efficientnet-b0
+  mha_num_attention_heads: 4
+  mha_num_attention_layers: 4
+  mha_ff_dim_factor: 4
+  context_type: temporal
+  normalize: true
+  waypoint_index: 2
+  checkpoint_path: weights/nomad/real/fixed_residual_aug_best.pth
+  encoding_size: 256
+  context_size: 3
+  image_size:
+  - 96
+  - 96
+  len_traj_pred: 8
+  learn_angle: false
+  cond_predict_scale: false
+  down_dims:
+  - 64
+  - 128
+  - 256
+  direction_conditioning: true
+  direction_conditioning_mode: residual
+  direction_normalize: true
+  direction_scale: 4.0
+  direction_scale_learnable: true
+  direction_num_commands: 3
+  direction_latent_dim: 64
+  direction_hidden_dim: 64
+  num_diffusion_iters: 10
+  num_action_samples: 8
+  action_noise_scale: 1.0
+  action_sample_strategy: mean
+  cmd_dir_theta_threshold_deg: 15.0
+  action_stats:
+    min:
+    - -2.5
+    - -4.0
+    max:
+    - 5.0
+    - 4.0
+dataset:
+  metric_waypoint_spacing: 0.065
+  waypoint_spacing: 1
+  cmd_dir_hold_samples_after_change: auto
+collection:
+  dataset_type: train
+  trajectory_name: ''
+  pose_source: amcl
+  sample_dt: 0.25
+  image_format: jpg
+  control_rate: 20.0
+  nav_path_topic: /move_base/NavfnROS/plan
+  recovery_start_distance: 0.1
+  vint_resume_distance: 0.05
+  angular_recovery_error: 0.8
+  min_trajectory_samples: auto
+training:
+  model_name: fixed_residual_aug
+  pretrained_weights_path: weights/nomad.pth
+  freeze_dist_pred_net: true
+  freeze_layers:
+  - vision_encoder.obs_encoder
+  - vision_encoder.goal_encoder
+  - vision_encoder.compress_obs_enc
+  - vision_encoder.compress_goal_enc
+  - vision_encoder.sa_encoder
+  use_test: false
+  tensorboard: true
+  epoch:
+  - 12
+  batch_size: 64
+  num_workers: 4
+  learning_rate: 2.0e-05
+  layer_learning_rates:
+    vision_encoder.direction_encoder: 0.0002
+    vision_encoder.direction_encoder.raw_scale: 0.05
+  weight_decay: 0.0001
+  alpha: 0.0
+  gradient_clip: 1.0
+  cmd_dir_loss_weighting: true
+  cmd_dir_loss_weight_power: 0.5
+  scheduler: warmup_cosine
+  warmup_epochs: 4
+  warmup_start_factor: 0.1
+  min_lr_factor: 0.1
+  resume: ''

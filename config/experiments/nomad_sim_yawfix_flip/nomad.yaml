@@ -1,0 +1,133 @@
+# Sim training data with the localization yaw lag removed, plus the
+# horizontal-flip augmentation.
+#
+# Each trained checkpoint picks up a small left/right preference of its own
+# (this dataset's plain run steers +0.27 deg left on straight corridors, the
+# real-data run 0.16 deg right), which the controller gain amplifies into a
+# steady drift. Mirroring every trajectory makes the training set exactly
+# left/right symmetric, so the asymmetry has no source. Inference stays stock
+# NoMaD.
+#
+# The sim bags' /mcl_pose yaw trails its own position stream by ~0.56 s during
+# turns (real bags: ~0.14 s), and because the teacher waypoints are expressed
+# in the robot frame via yaw[i], that lag rotated every waypoint towards the
+# turn. It inflated the labelled turn angle by a constant 1.59x, which is why
+# the sim-trained model steers harder than the robot ever drove. Datasets
+# regenerated with scripts/fix_yaw_lag.py (label_turn_ratio 1.59 -> 1.00).
+seed: 0
+device: auto
+
+paths:
+  rosbag:
+    path: "/home/takumi/bags/sim_0.8.bag"
+  dataset:
+    train_data_dir: dataset/bags_all_train_yawfix_flip/
+    test_data_dir: dataset/bags_i_n_test_yawfix/
+
+model:
+  device: auto
+  model_type: nomad
+  image_center_crop: false
+  obs_encoder: efficientnet-b0
+  mha_num_attention_heads: 4
+  mha_num_attention_layers: 4
+  mha_ff_dim_factor: 4
+  context_type: temporal
+  normalize: true
+  waypoint_index: 2
+  checkpoint_path: weights/nomad/bags_all_train_yawfix_flip/sim_yawfix_flip_epoch012.pth
+  encoding_size: 256
+  context_size: 3
+  image_size: [96, 96]
+  len_traj_pred: 8
+  learn_angle: false
+  cond_predict_scale: false
+  down_dims: [64, 128, 256]
+  direction_conditioning: true
+  direction_conditioning_mode: residual
+  # Normalize the learned command vector, then add a residual whose gain is
+  # trained end-to-end instead of hand-picked (see direction_scale_learnable
+  # below). A hand-swept grid (s04..s36_long) showed held-out compliance and
+  # accuracy both highly sensitive to this gain, so it is no longer fixed.
+  direction_normalize: true
+  direction_scale_learnable: true
+  # Starting point only: the trained checkpoint's actual gain (~17.5) is
+  # stored in its state_dict and overrides this at load time.
+  direction_scale: 4.0
+  direction_num_commands: 3
+  direction_latent_dim: 64
+  direction_hidden_dim: 64
+  num_diffusion_iters: 10
+  num_action_samples: 8
+  action_noise_scale: 1.0
+  action_sample_strategy: mean
+  # action_sample_strategy: cmd_dir
+  # action_sample_strategy: first
+  cmd_dir_theta_threshold_deg: 15.0
+  action_stats:
+    min: [-2.5, -4.0]
+    max: [5.0, 4.0]
+
+dataset:
+  metric_waypoint_spacing: 0.065
+  waypoint_spacing: 1
+  cmd_dir_hold_samples_after_change: auto
+
+collection:
+  dataset_type: train
+  trajectory_name: ""
+  pose_source: amcl
+  sample_dt: 0.25
+  image_format: jpg
+  control_rate: 20.0
+  nav_path_topic: /move_base/NavfnROS/plan
+  recovery_start_distance: 0.1
+  vint_resume_distance: 0.05
+  angular_recovery_error: 0.8
+  min_trajectory_samples: auto
+
+training:
+  model_name: "sim_yawfix_flip"
+  pretrained_weights_path: weights/nomad.pth
+  freeze_dist_pred_net: true
+  freeze_layers:
+    - vision_encoder.obs_encoder
+    - vision_encoder.goal_encoder
+    - vision_encoder.compress_obs_enc
+    - vision_encoder.compress_goal_enc
+    - vision_encoder.sa_encoder
+  use_test: false
+  tensorboard: true
+  epoch: [12]
+  batch_size: 64
+  num_workers: 4
+  learning_rate: 0.00002
+  layer_learning_rates:
+    vision_encoder.direction_encoder: 0.0002
+    # The residual gain is a single scalar with no overfitting risk from a
+    # fast learning rate; it needs a much larger step size than the
+    # direction embedding/projector to actually move away from its init
+    # within a short fine-tuning schedule.
+    vision_encoder.direction_encoder.raw_scale: 0.05
+  # No augmentation, matching corridor_classifier so both packages train the
+  # same way.
+  #
+  # An a-h -> i-n sweep (2026-09-12) compared none / flip / photometric /
+  # flip+photometric in both packages. Photometric alone did score best
+  # (vnm_ros: +0.59 deg steering separation over none, 16 sigma; corridor:
+  # macro F1 0.711 vs 0.693), but every difference was small -- corridor's
+  # whole spread was 0.018 macro F1, and vnm_ros's ADE/FDE barely moved -- and
+  # all of it came from a single seed. None is the default because it is the
+  # simplest thing that is not measurably worse in any way that matters, and
+  # because it makes the two packages consistent. Set training.augmentation
+  # below (see config/experiments/nomad_aug2_photo) to turn photometric back on.
+  weight_decay: 0.0001
+  alpha: 0.0
+  gradient_clip: 1.0
+  cmd_dir_loss_weighting: true
+  cmd_dir_loss_weight_power: 0.5
+  scheduler: warmup_cosine
+  warmup_epochs: 4
+  warmup_start_factor: 0.1
+  min_lr_factor: 0.1
+  resume: ""
