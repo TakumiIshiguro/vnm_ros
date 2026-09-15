@@ -12,8 +12,15 @@ def clip_angle(theta: float) -> float:
 
 
 class WaypointController:
-    def __init__(self, dt: float, max_v: float, max_w: float):
+    def __init__(
+        self, dt: float, max_v: float, max_w: float, angular_gain: float = 1.0
+    ):
         self.dt = dt
+        # Multiplies the geometrically correct turn rate below. The model
+        # predicts the conditional mean over the demonstrations, which
+        # understates the sharpest turns, so following its waypoints exactly
+        # undershoots the demonstrated turn radius; this compensates.
+        self.angular_gain = float(angular_gain)
         self.safety = SafetyFilter(max_v=max_v, max_w=max_w)
 
     def command(
@@ -36,6 +43,10 @@ class WaypointController:
             w = np.sign(dy) * np.pi / (2 * angular_dt)
         else:
             v = dx / self.dt
-            w = np.arctan(dy / dx) / angular_dt
+            # On the constant-curvature arc that reaches the waypoint, the
+            # waypoint's bearing is half the heading change, so the rate that
+            # actually gets there is 2*bearing/angular_dt. Commanding
+            # bearing/angular_dt steers at half the required rate.
+            w = self.angular_gain * 2.0 * np.arctan(dy / dx) / angular_dt
 
         return self.safety.clip(v, w)

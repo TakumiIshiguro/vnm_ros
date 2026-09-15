@@ -268,6 +268,7 @@ def main():
         dt=1.0 / float(robot["model_rate"]),
         max_v=float(robot["max_v"]),
         max_w=float(robot["max_w"]),
+        angular_gain=float(robot.get("angular_gain", 1.0)),
     )
 
     def reset_context_callback(msg):
