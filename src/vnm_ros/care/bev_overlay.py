@@ -1,3 +1,4 @@
+import math
 from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
@@ -41,6 +42,71 @@ def decode_action_candidates(data: Sequence[float]) -> Optional[Dict]:
             "none",
         ),
     }
+
+
+TARGET_ARROW_COLOR = (45, 120, 230)
+TARGET_ARROW_OUTLINE = (20, 45, 95)
+MINIMUM_ARROW_PIXELS = 48.0
+
+
+def _ticks(minimum: float, maximum: float, spacing: float):
+    """Tick values anchored at zero.
+
+    Stepping from `minimum` instead skipped the origin whenever the range was
+    not an even multiple of the spacing, which put two rounded "0" labels
+    either side of the centre line and none on it.
+    """
+    first = int(math.ceil(minimum / spacing - 1e-6))
+    last = int(math.floor(maximum / spacing + 1e-6))
+    return [index * spacing for index in range(first, last + 1)]
+
+
+def _format_tick(value: float, signed: bool = False) -> str:
+    if abs(value) < 1e-6:
+        return "0"
+    magnitude = abs(value)
+    text = (
+        f"{magnitude:.0f}"
+        if abs(magnitude - round(magnitude)) < 1e-6
+        else f"{magnitude:.1f}"
+    )
+    if value < 0.0:
+        return "-" + text
+    return ("+" + text) if signed else text
+
+
+def _draw_target_arrow(draw: ImageDraw.ImageDraw, box, direction: str) -> None:
+    """Draw the commanded direction as one large arrow above the plot."""
+    if direction not in ("straight", "left", "right"):
+        return
+    left, top, right, bottom = box
+    size = min((bottom - top) * 0.8, (right - left) * 0.45)
+    if size < MINIMUM_ARROW_PIXELS:
+        return
+    half = size / 2.0
+    head = size * 0.42
+    head_half = size * 0.30
+    shaft_half = size * 0.13
+    points = [
+        (0.0, -half),
+        (-head_half, -half + head),
+        (-shaft_half, -half + head),
+        (-shaft_half, half),
+        (shaft_half, half),
+        (shaft_half, -half + head),
+        (head_half, -half + head),
+    ]
+    if direction == "left":
+        points = [(dy, -dx) for dx, dy in points]
+    elif direction == "right":
+        points = [(-dy, dx) for dx, dy in points]
+    center_x = (left + right) / 2.0
+    center_y = (top + bottom) / 2.0
+    draw.polygon(
+        [(center_x + dx, center_y + dy) for dx, dy in points],
+        fill=TARGET_ARROW_COLOR,
+        outline=TARGET_ARROW_OUTLINE,
+    )
 
 
 def _validate_points(points, columns: int, name: str) -> np.ndarray:
@@ -90,7 +156,13 @@ def render_care_bev(
     )
     image = Image.new("RGB", (width, height), (248, 249, 250))
     draw = ImageDraw.Draw(image)
-    available_plot = (70, 35, width - 25, height - 70)
+    # Keep a band above the plot for the target-direction arrow. The plot is
+    # bottom-anchored, so a wide map leaves the arrow more room than this
+    # minimum; reserving it stops the arrow from disappearing when the map
+    # aspect ratio fills the image.
+    arrow_band_top = 35
+    arrow_band = int(round(height * 0.18))
+    available_plot = (70, arrow_band_top + arrow_band, width - 25, height - 70)
     available_width = available_plot[2] - available_plot[0]
     available_height = available_plot[3] - available_plot[1]
     pixels_per_metre = min(
@@ -139,19 +211,25 @@ def render_care_bev(
     draw.rectangle(plot, outline=(90, 96, 102), width=2)
 
     half_width = map_width_m / 2.0
-    for lateral in np.arange(-half_width, half_width + 0.1, 1.0):
+    for lateral in _ticks(-half_width, half_width, grid_spacing_m):
         x, _ = point((0.0, lateral))
-        draw.text((x - 10, plot[3] + 8), f"{lateral:+.0f}", fill=(45, 50, 55))
-    for forward in np.arange(0.0, map_height_m + 0.1, 1.0):
+        label = _format_tick(lateral, signed=True)
+        draw.text(
+            (x - draw.textlength(label) / 2.0, plot[3] + 8),
+            label,
+            fill=(45, 50, 55),
+        )
+    for forward in _ticks(0.0, map_height_m, grid_spacing_m):
         _, y = point((forward, 0.0))
-        draw.text((plot[0] - 28, y - 5), f"{forward:.0f}", fill=(45, 50, 55))
-    draw.text((plot[0] + 4, 8), "CARE: obstacles + NoMaD candidates", fill=(20, 25, 30))
-    draw.text((plot[0] - 50, plot[1] - 2), "x [m]", fill=(45, 50, 55))
-    draw.text((center_x - 24, height - 33), "y [m]", fill=(45, 50, 55))
-    draw.text((plot[0], height - 18), "+left", fill=(45, 50, 55))
-    draw.text((plot[2] - 30, height - 18), "right-", fill=(45, 50, 55))
+        label = _format_tick(forward)
+        draw.text(
+            (plot[0] - 8 - draw.textlength(label), y - 6),
+            label,
+            fill=(45, 50, 55),
+        )
+    draw.text((plot[0] - 34, plot[1] - 18), "x [m]", fill=(45, 50, 55))
+    draw.text((center_x - 14, plot[3] + 26), "y [m]", fill=(45, 50, 55))
 
-    visible_all_obstacles = 0
     all_obstacle_pixels = set()
     for obstacle in all_obstacles:
         forward, left = map(float, obstacle)
@@ -160,7 +238,6 @@ def render_care_bev(
         if abs(left) > half_width:
             continue
         all_obstacle_pixels.add(point(obstacle))
-        visible_all_obstacles += 1
     all_radius = max(1, obstacle_radius_pixels - 1)
     for x, y in all_obstacle_pixels:
         draw.ellipse(
@@ -168,7 +245,6 @@ def render_care_bev(
             fill=(125, 132, 142),
         )
 
-    visible_obstacles = 0
     for obstacle in obstacles:
         forward, left = map(float, obstacle)
         if not (0.0 <= forward <= map_height_m):
@@ -181,7 +257,6 @@ def render_care_bev(
             (x - radius, y - radius, x + radius, y + radius),
             fill=(225, 55, 55),
         )
-        visible_obstacles += 1
 
     candidate_count = 0
     selected_index = -1
@@ -247,44 +322,9 @@ def render_care_bev(
         fill=(40, 190, 95),
         outline=(20, 80, 45),
     )
-    draw.text(
-        (plot[0] + 8, plot[1] + 8),
-        f"all={visible_all_obstacles}  CARE bins={visible_obstacles}  "
-        f"candidates={candidate_count}  selected={selected_index}  "
-        f"target={target_direction}  "
-        f"avoidance={'on' if avoidance_active else 'off'}",
-        fill=(20, 25, 30),
+    _draw_target_arrow(
+        draw,
+        (plot[0], arrow_band_top, plot[2], plot[1]),
+        target_direction,
     )
-    legend_x = plot[2] - 185
-    draw.rectangle(
-        (legend_x, plot[1] + 8, legend_x + 11, plot[1] + 19),
-        fill=(125, 132, 142),
-    )
-    draw.text((legend_x + 17, plot[1] + 7), "all points", fill=(20, 25, 30))
-    draw.rectangle(
-        (legend_x, plot[1] + 25, legend_x + 11, plot[1] + 36),
-        fill=(225, 55, 55),
-    )
-    draw.text((legend_x + 17, plot[1] + 24), "CARE bins", fill=(20, 25, 30))
-    draw.line(
-        (legend_x, plot[1] + 48, legend_x + 11, plot[1] + 48),
-        fill=(64, 156, 255),
-        width=3,
-    )
-    draw.text((legend_x + 17, plot[1] + 42), "candidate", fill=(20, 25, 30))
-    draw.line(
-        (legend_x, plot[1] + 64, legend_x + 11, plot[1] + 64),
-        fill=(
-            (225, 70, 235)
-            if avoidance_active
-            else (255, 211, 40)
-        ),
-        width=4,
-    )
-    selected_label = (
-        "CARE avoidance"
-        if avoidance_active
-        else "selected"
-    )
-    draw.text((legend_x + 17, plot[1] + 58), selected_label, fill=(20, 25, 30))
     return image
