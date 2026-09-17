@@ -268,7 +268,6 @@ def main():
         dt=1.0 / float(robot["model_rate"]),
         max_v=float(robot["max_v"]),
         max_w=float(robot["max_w"]),
-        angular_gain=float(robot.get("angular_gain", 1.0)),
     )
 
     def reset_context_callback(msg):
@@ -545,7 +544,7 @@ def main():
                     pil_to_msg(topo.images[subgoal_selector.selected_node])
                 )
 
-            v, w = controller.command(waypoint, waypoint_index)
+            v, w = controller.command(waypoint)
             if select_by_care and care_rotate_in_place:
                 v = 0.0
             cmd_debug = Twist()

@@ -182,7 +182,6 @@ NoMaDを使う場合は `model_type: nomad`、NoMaD用checkpoint、`diffusers`�
 | `navigation_mode` | `topomap` の場合はTopomapのサブゴールへ向かい、`explore` の場合はNoMaDのgoal mask探索を使います。 |
 | `max_v` | 最大並進速度 `[m/s]` です。 |
 | `max_w` | 最大角速度 `[rad/s]` です。 |
-| `angular_gain` | 角速度指令のゲインです。制御則は円弧追従の幾何値 `2*bearing/angular_dt` を出しますが、モデルは学習データの条件付き平均を予測するため急旋回を過小に出します。その分を補う倍率で、`1.0` が補正なしです。 |
 | `publish_cmd_vel` | `true` の場合、実際の速度指令を `cmd_vel_topic` へ送信します。 |
 | `publish_waypoint` | `true` の場合、選択したWaypointを `waypoint_topic` へ送信します。 |
 
