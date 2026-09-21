@@ -19,13 +19,17 @@ model:
   context_type: temporal
   normalize: true
   waypoint_index: 4
-  # Default to the sim checkpoint trained on yaw-lag-corrected, mirrored labels
-  # (config/experiments/nomad_sim_yawfix_flip). Two separate corrections:
-  # the uncorrected sim labels overstate the turn angle by a constant 1.59x
-  # (see scripts/fix_yaw_lag.py), and an unmirrored training set leaves each
-  # run with a left/right preference of its own that the controller gain turns
-  # into a steady drift. Inference is stock NoMaD.
-  checkpoint_path: weights/nomad/bags_all_train_yawfix_flip/sim_yawfix_flip_best.pth
+  # Yaw-lag-corrected labels (scripts/fix_yaw_lag.py) trained with the
+  # staged freeze -> unfreeze recipe the 2026-09-09 sweep picked for unknown
+  # environments; see config/experiments/nomad_yawfix_staged_stage{1,2}.
+  #
+  # The sim bags' localization published a yaw trailing its own position
+  # stream by 0.56 s, which inflated the labelled turn angle by a constant
+  # 1.59x; the real bags measure 0.007 s and needed no correction. On the
+  # held-out i-n split this scores 7.6 deg steering separation against the
+  # single-stage run's 6.8; the pre-correction checkpoints score 10.8, but
+  # only because that 1.59x overshoot is still in their labels.
+  checkpoint_path: weights/nomad/bags_all_train_yawfix/yawfix_staged_best.pth
   encoding_size: 256
   context_size: 3
   image_size: [96, 96]
