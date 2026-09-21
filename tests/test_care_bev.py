@@ -127,7 +127,7 @@ def test_default_care_config_uses_shared_robot_frame_and_topics():
     assert config["avoidance"] == {
         "require_obstacle_data": True,
         "num_action_samples": 8,
-        "waypoint_index": 1,
+        "waypoint_index": 4,
         "base_action_strategy": "mean",
         "maximum_forward_range_m": 1.0,
         "path_influence_radius_m": 0.40,

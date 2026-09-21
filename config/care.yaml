@@ -13,7 +13,7 @@ map:
 avoidance:
   require_obstacle_data: true
   num_action_samples: 8
-  waypoint_index: 1
+  waypoint_index: 4
   # Select the target-conditioned NoMaD trajectory before CARE adjustment.
   # Supported values: mean, first.
   base_action_strategy: mean
