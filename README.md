@@ -133,6 +133,14 @@ BEV draws all points in gray and the bin-selected CARE input in red, together
 with `/vnm/action_candidates`. It also shows the current target direction. The
 selected path is yellow during normal
 navigation and changes to magenta while CARE is applying avoidance rotation.
+When the straight-command angular velocity reaches `robot.straight_max_w`,
+the selected path is cyan instead. Active CARE avoidance bypasses this
+straight-command limit and retains the global `robot.max_w` limit;
+its path remains magenta unless the angular deadband is active.
+It returns to yellow or magenta when the limit is no longer reached.
+When `robot.angular_deadband` suppresses a nonzero angular velocity to zero,
+the selected path is green (also overriding the CARE avoidance color).
+An already-zero command or a stop does not activate this indicator.
 The default view is forward 1.2 m by lateral
 3 m (-1.5 to +1.5 m), using the same pixels-per-metre scale on both axes. The result is
 published as an image on `/vnm/care_bev`. Set `start_navigation:=false` or

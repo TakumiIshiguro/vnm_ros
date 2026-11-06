@@ -19,17 +19,74 @@ model:
   context_type: temporal
   normalize: true
   waypoint_index: 4
-  # Yaw-lag-corrected labels (scripts/fix_yaw_lag.py) trained with the
-  # staged freeze -> unfreeze recipe the 2026-09-09 sweep picked for unknown
-  # environments; see config/experiments/nomad_yawfix_staged_stage{1,2}.
+  # Trained on the real bags with the staged freeze -> unfreeze recipe the
+  # 2026-09-09 sweep picked for unknown environments, on yaw-offset-corrected
+  # labels, plus a mirrored copy of every trajectory. See
+  # config/experiments/nomad_real_yawoffset_flip_stage{1,2}.
   #
-  # The sim bags' localization published a yaw trailing its own position
-  # stream by 0.56 s, which inflated the labelled turn angle by a constant
-  # 1.59x; the real bags measure 0.007 s and needed no correction. On the
-  # held-out i-n split this scores 7.6 deg steering separation against the
-  # single-stage run's 6.8; the pre-correction checkpoints score 10.8, but
-  # only because that 1.59x overshoot is still in their labels.
-  checkpoint_path: weights/nomad/bags_all_train_yawfix/yawfix_staged_best.pth
+  # The mirroring: commanded straight, the previous checkpoint steered into
+  # side openings -- worst -12.0 deg/s sustained at a_f[2387], against -6.6
+  # for the plain-corridor control -- even where its own teacher drove
+  # straight through and no right-turn demonstration existed within 13 m.
+  # The cause is the course, not the loss: it has only 27 distinct turnable
+  # locations and 17 were ever driven under a single command, so the model
+  # can fit the data by keying on what a place looks like instead of on the
+  # command, and a right opening it learned to turn at elsewhere then pulls
+  # it. Mirroring every trajectory (cmd_dir left/right swapped, positions and
+  # yaw negated; scripts/augment_dataset_horizontal_flip.py) doubles the
+  # distinct-looking locations and makes the two sides symmetric.
+  #
+  # Measured as the sustained turn rate the model asks for under a straight
+  # command -- a 3 s rolling mean of arctan(dy/dx)/dt at waypoint_index, on
+  # a_f+g+h. Frames past 3 deg/s fall from 31.3% to 3.7% at the openings and
+  # 21.3% to 4.1% on the control, the opening worst case from -12.0 to -5.0,
+  # and the right/left asymmetry (-12.0 vs -7.0) closes to -2.9 vs -5.0. The
+  # openings are no longer worse than plain corridor. Turning is kept: mean
+  # |w| under a turn command goes 12.5 -> 9.9 deg/s left and 10.7 -> 11.2
+  # right, with one of 30 left cases losing its sign.
+  #
+  # Both numbers come from the training set. There is no unseen-area real
+  # split anywhere -- a-h is all the real data there is -- so this measures
+  # that the model now fits its own teacher where it did not before, not
+  # that it generalises better. Single seed.
+  #
+  # The correction: the direction the robot actually travelled sat about
+  # 0.5 deg to the right of the yaw recorded beside it, on every straight in
+  # the course, so every teacher trajectory came out rotated by that much and
+  # the model learned that going forward means aiming 0.5 deg right. At run
+  # time the controller steers to whatever the model asks for -- it never
+  # reads /mcl_pose -- so that became a real rightward drift CARE had to keep
+  # pushing back against. scripts/fix_yaw_offset.py rotates the labels back;
+  # the straight-line drift goes from -16.6 deg per ten seconds to +1.8.
+  #
+  # Self-information weighting (Imai et al., SICE SI 2025) was tried on top
+  # and is not used: weights/nomad/real_yawoffset/real_selfinfo_staged_epoch012.pth,
+  # config/experiments/nomad_real_selfinfo_staged_stage{1,2}. It does what
+  # the paper says -- it pushes rare sharp turns harder -- but this model
+  # was not short of turn, it was short of nothing: at waypoint_index 4 it
+  # rotates 3.7x the teacher against this one's 1.97, and drifts +18 deg per
+  # ten seconds against +1.8, because the weighting leans to whichever side
+  # has the longer tail in the training course.
+  #
+  # Unfreezing the vision encoder was also tried, in sim where there is a
+  # real unseen-area split (config/experiments/nomad_yawfix_unfreeze*). It
+  # makes the model markedly more selective about where it turns, but that
+  # selectivity is learned over the training course's appearance: on the
+  # unseen split one junction with strong floor glare drops from 1.40 of the
+  # teacher's rotation to 0.01, a complete failure to turn. The pretrained
+  # features handle that junction fine. Frozen stays.
+  #
+  # On closed-loop trial: the cleaned 2026-10-30 bags alone, no mirroring, no
+  # straight exclusion, trained longer: stage 1 80 epochs, stage 2 48, seed 2
+  # (config/experiments/nomad_real1030_staged_{stage1,stage2} with the epoch
+  # counts changed; nomad_real1030_staged_long_* is the 40 + 24 variant). At
+  # 20 + 12 the learned gain was still rising when the schedule ran out; here
+  # it ends at 47.4. On real images it halves the left opening pull (1.3 vs
+  # 2.4 deg) with straight-road drift still ~0; on sim images it drifts left
+  # ~+17 deg per 10 s, so it is meant for the real robot. The previous trial
+  # checkpoint was real1030_staged_best.pth (20 + 12); the notes above
+  # describe weights/nomad/real_yawoffset_flip/flip_nostraight_s2_best.pth.
+  checkpoint_path: weights/nomad/real1030_yawoffset/real1030_ep80_48_seed2_epoch048.pth
   encoding_size: 256
   context_size: 3
   image_size: [96, 96]
@@ -40,13 +97,49 @@ model:
   direction_conditioning: true
   direction_conditioning_mode: residual
   # Normalize the learned command vector, then add a residual whose gain is
-  # trained end-to-end instead of hand-picked (see direction_scale_learnable
-  # below). A hand-swept grid (s04..s36_long) showed held-out compliance and
-  # accuracy both highly sensitive to this gain, so it is no longer fixed.
+  # trained end-to-end. Left free the gain climbs well above its 4.0 init --
+  # 20 on the simulator set, 30-42 on the real one -- because the command is
+  # close to a location id in these courses: only 8 of the simulator's 22
+  # turnable spots, and 10 of the real course's 27, were ever driven under
+  # more than one command, so leaning on the command lowers training loss.
+  #
+  # What that costs is the image. Measured as how hard the model steers back
+  # when its context frames are translated sideways, which is what a yaw
+  # error looks like, the pretrained NoMaD answers 1.26 deg/s per pixel and
+  # crosses zero where it should; at a learned gain of 41.9 that falls to
+  # 0.078.
+  #
+  # Three ways round it were tried on the real set and none worked:
+  #
+  #   - Fixing the gain. A stage-1 sweep at 4/8/12/16/24/32/36 trades
+  #     steering against obedience monotonically (config/experiments/
+  #     nomad_flipscale*_stage1). 16 and 24 were each promoted and each
+  #     failed in the simulator -- 16 stopped following the command, 24 was
+  #     still pulled into side openings. The pull runs opposite to the
+  #     sweep: the lower the gain, the harder the model is drawn in, because
+  #     the same change that makes it read the image makes it react to the
+  #     opening (opening w: -0.400 at 16, -0.159 at 32, -0.066 learned).
+  #   - Dropping the plain-corridor straight samples, so the straight
+  #     command is represented by the junctions it has to be told apart at
+  #     (config/experiments/nomad_flip_nostraight_stage1, three quarters of
+  #     the straight samples removed, loss weighting off). The gain still
+  #     climbed to 30.9, and the opening pull measured worse, not better:
+  #     -0.005 -> -0.064 mean against the same stage-1 baseline. That
+  #     checkpoint is nonetheless the current default, on trial in closed
+  #     loop -- the offline opening figure has twice now failed to predict
+  #     how a checkpoint drives (gains 16 and 24 both looked acceptable and
+  #     both failed), so it is not trusted on its own to reject one. Stage 1
+  #     only; stage 2 has not been run for it.
+  #   - Loss weighting by command frequency, which is what
+  #     cmd_dir_loss_weighting already does, and which none of the above
+  #     changed the outcome of.
+  #
+  # None of these adds the missing thing, which is examples of the same
+  # place under different commands. Left at the default the gain is learned.
   direction_normalize: true
   direction_scale_learnable: true
-  # Starting point only: the trained checkpoint's actual gain (~17.5) is
-  # stored in its state_dict and overrides this at load time.
+  # Starting point only: the trained checkpoint's own gain is stored in its
+  # state_dict and overrides this at load time.
   direction_scale: 4.0
   direction_num_commands: 3
   direction_latent_dim: 64
@@ -54,8 +147,8 @@ model:
   num_diffusion_iters: 10
   num_action_samples: 8
   action_noise_scale: 1.0
-  action_sample_strategy: mean
-  # action_sample_strategy: cmd_dir
+  # action_sample_strategy: mean
+  action_sample_strategy: cmd_dir
   # action_sample_strategy: first
   cmd_dir_theta_threshold_deg: 15.0
   action_stats:

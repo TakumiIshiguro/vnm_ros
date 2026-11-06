@@ -1,0 +1,44 @@
+paths:
+  topomap:
+    topomap_dir: topomaps/topomap
+
+model_type: nomad
+
+robot:
+  navigation_mode: explore
+  model_rate: 3.0 #4.0 5.0
+  max_v: 0.2 #0.25 0.3
+  max_w: 0.3
+  publish_cmd_vel: true
+  publish_waypoint: true
+
+topomap:
+  goal_node: -1
+  search_radius: 4
+  close_threshold: 3
+  sample_dt: 0.5
+  overwrite: true
+
+visualization:
+  dataset:
+    dataset_type: train
+    trajectory_name: ""
+    frame_id: map
+    rate: 4.0
+    loop: true
+  overlay:
+    rate: 10.0
+    image_size: [480, 480]
+  evaluation:
+    dataset_type: train
+    trajectory_name: ""
+    sample_indices: []
+    # sample_indices: [11, 307, 1323, 1612]
+    output_dir: auto
+    samples_per_direction: 100
+    include_augmented: false
+    compare_all_commands: true
+    strategy: configured
+    sample_seed: 0
+    seed: 0
+    preview_image_height: 160

@@ -29,6 +29,8 @@ def test_decode_action_candidates_restores_shape_and_selection():
     assert decoded["selected"] == 1
     assert decoded["waypoint_index"] == 0
     assert decoded["avoidance_active"] is False
+    assert decoded["straight_limit_active"] is False
+    assert decoded["angular_deadband_active"] is False
     assert decoded["target_direction"] == "none"
     assert decoded["actions"].shape == (2, 2, 2)
     np.testing.assert_allclose(decoded["actions"][1, 1], [0.2, -0.1])
@@ -40,6 +42,7 @@ def test_decode_action_candidates_reads_appended_avoidance_state():
     decoded = decode_action_candidates(data)
 
     assert decoded["avoidance_active"] is True
+    assert decoded["straight_limit_active"] is False
     assert decoded["target_direction"] == "right"
 
 
@@ -129,6 +132,7 @@ def test_default_care_config_uses_shared_robot_frame_and_topics():
         "num_action_samples": 8,
         "waypoint_index": 4,
         "base_action_strategy": "mean",
+        "cmd_dir_target_theta_deg": {"straight": 0.0, "left": None, "right": None},
         "maximum_forward_range_m": 1.0,
         "path_influence_radius_m": 0.40,
         "depth_offset_m": 0.0,
@@ -149,3 +153,65 @@ def test_default_care_config_uses_shared_robot_frame_and_topics():
         == "/unidepth/obstacle_points_all"
     )
     assert config["topics"]["care_bev_topic"] == "/vnm/care_bev"
+
+
+@pytest.mark.parametrize("avoidance", [False, True])
+def test_straight_limit_color_takes_priority_and_restores_previous_color(avoidance):
+    candidates = {
+        "selected": 0, "waypoint_index": 1,
+        "avoidance_active": avoidance, "straight_limit_active": True,
+        "actions": np.asarray([[[.2, 0.], [.4, .1]]], dtype=np.float32),
+    }
+    image = render_care_bev([], candidates, map_width_m=3., map_height_m=1.2)
+    pixels = np.asarray(image)
+    assert np.any(np.all(pixels == (0, 200, 200), axis=2))
+    assert not np.any(np.all(pixels == (255, 211, 40), axis=2))
+    assert not np.any(np.all(pixels == (225, 70, 235), axis=2))
+    candidates["straight_limit_active"] = False
+    pixels = np.asarray(render_care_bev([], candidates, map_width_m=3., map_height_m=1.2))
+    expected = (225, 70, 235) if avoidance else (255, 211, 40)
+    assert np.any(np.all(pixels == expected, axis=2))
+    assert not np.any(np.all(pixels == (0, 200, 200), axis=2))
+
+
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("deadband", [False, True])
+def test_straight_limit_state_round_trips_with_trajectory(active, deadband):
+    pytest.importorskip("rospy")
+    from vnm_ros.ros.ros_utils import action_candidates_msg
+
+    actions = np.asarray([[[.2, 0.], [.4, .1]]], dtype=np.float32)
+    message = action_candidates_msg(actions, 0, 1, avoidance_active=True,
+                                    target_direction=0, straight_limit_active=active,
+                                    angular_deadband_active=deadband)
+    decoded = decode_action_candidates(message.data)
+    np.testing.assert_array_equal(decoded["actions"], actions)
+    assert decoded["straight_limit_active"] is active
+    assert decoded["angular_deadband_active"] is deadband
+    legacy = decode_action_candidates(message.data[:-1])
+    assert legacy["straight_limit_active"] is active
+    assert legacy["angular_deadband_active"] is False
+    assert decoded["avoidance_active"] is True
+    assert decoded["target_direction"] == "straight"
+    assert decoded["waypoint_index"] == 1
+
+
+@pytest.mark.parametrize("avoidance", [False, True])
+def test_deadband_path_is_green_and_restores_previous_color(avoidance):
+    candidates = {
+        "selected": 0, "waypoint_index": 1, "avoidance_active": avoidance,
+        "angular_deadband_active": True,
+        "actions": np.asarray([[[.2, 0.], [.4, .1]]], dtype=np.float32),
+    }
+    def pixels():
+        return np.asarray(render_care_bev([], candidates, map_width_m=3., map_height_m=1.2))
+
+    rendered = pixels()
+    assert np.any(np.all(rendered == (60, 180, 75), axis=2))
+    for color in [(255, 211, 40), (225, 70, 235), (0, 200, 200)]:
+        assert not np.any(np.all(rendered == color, axis=2))
+    candidates["angular_deadband_active"] = False
+    rendered = pixels()
+    expected = (225, 70, 235) if avoidance else (255, 211, 40)
+    assert np.any(np.all(rendered == expected, axis=2))
+    assert not np.any(np.all(rendered == (60, 180, 75), axis=2))

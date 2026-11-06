@@ -195,10 +195,26 @@ def load_care_config(config_dir: str = None) -> Dict[str, Dict[str, Any]]:
     avoidance["base_action_strategy"] = str(
         avoidance.get("base_action_strategy", "mean")
     ).strip().lower()
-    if avoidance["base_action_strategy"] not in ("mean", "first"):
+    if avoidance["base_action_strategy"] not in ("mean", "first", "cmd_dir"):
         raise ValueError(
-            "care avoidance.base_action_strategy must be mean or first"
+            "care avoidance.base_action_strategy must be mean, first or cmd_dir"
         )
+    targets = avoidance.get("cmd_dir_target_theta_deg") or {}
+    if not isinstance(targets, dict):
+        raise ValueError(
+            "care avoidance.cmd_dir_target_theta_deg must be a mapping"
+        )
+    parsed_targets = {}
+    for name in ("straight", "left", "right"):
+        value = targets.get(name)
+        parsed_targets[name] = None if value is None else float(value)
+    unknown = set(targets) - {"straight", "left", "right"}
+    if unknown:
+        raise ValueError(
+            "care avoidance.cmd_dir_target_theta_deg has unknown keys: "
+            + ", ".join(sorted(unknown))
+        )
+    avoidance["cmd_dir_target_theta_deg"] = parsed_targets
     for key, default in (
         ("maximum_forward_range_m", 1.5),
         ("path_influence_radius_m", 0.40),

@@ -1,0 +1,67 @@
+paths:
+  topomap:
+    topomap_dir: topomaps/topomap
+
+model_type: nomad
+
+robot:
+  navigation_mode: explore
+  # 0.0625 m a step at 4 Hz and 0.25 m/s: stride 4 gives 0.25 m, the nearest to
+  # the 0.26 m context and waypoint spacing the model was trained on.
+  model_rate: 4.0
+  context_stride: 4
+  max_v: 0.25
+  max_w: 0.8
+  # Pure pursuit lookahead along the predicted path; zero disables it.
+  pure_pursuit_lookahead_m: 1.0
+  # Zero any commanded turn rate below this, in rad/s. Commanded straight,
+  # the model aims slightly off centre and always to the same side, which
+  # is small per step but never cancels, so the heading walks away until
+  # CARE or a wall pushes back. On the real dataset straight commands sit
+  # at a median 0.04 rad/s while turns saturate max_w at 0.4, so nothing
+  # up to 0.08 touches a turn: at 0.05 it zeroes 58% of straight commands
+  # and 0% of either turn direction. Set 0.0 to disable.
+  angular_deadband: 0.0
+  # Upper bound on the turn rate, in rad/s, while cmd_dir is straight
+  # and CARE is not actively applying avoidance rotation.
+  # Passing a side opening the model steers into it even under a straight
+  # command: on a_f around index 2376-2388 it reached -0.22 rad/s for about
+  # four seconds, enough to swing the heading ~60 degrees, and the recovery
+  # afterwards is weaker than the pull. This bounds the excursion without
+  # stopping the model reacting. Keep it clear of what corridor centring
+  # needs (median 0.04 rad/s straight); turns are unaffected because they
+  # are commanded left/right, not straight. Set 0.0 to disable.
+  straight_max_w: 0.0
+  publish_cmd_vel: true
+  publish_waypoint: true
+
+topomap:
+  goal_node: -1
+  search_radius: 4
+  close_threshold: 3
+  sample_dt: 0.5
+  overwrite: true
+
+visualization:
+  dataset:
+    dataset_type: train
+    trajectory_name: ""
+    frame_id: map
+    rate: 4.0
+    loop: true
+  overlay:
+    rate: 10.0
+    image_size: [480, 480]
+  evaluation:
+    dataset_type: train
+    trajectory_name: ""
+    sample_indices: []
+    # sample_indices: [11, 307, 1323, 1612]
+    output_dir: auto
+    samples_per_direction: 100
+    include_augmented: false
+    compare_all_commands: true
+    strategy: configured
+    sample_seed: 0
+    seed: 0
+    preview_image_height: 160

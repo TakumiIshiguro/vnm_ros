@@ -27,6 +27,7 @@ class NoMaDTrainer:
         enable_tensorboard: bool = True,
         frozen_modules=None,
         cmd_dir_loss_weights=None,
+        self_information_weights=None,
         ema_model=None,
     ):
         self.model = model
@@ -44,6 +45,18 @@ class NoMaDTrainer:
             if cmd_dir_loss_weights is not None
             else None
         )
+        # (bin edges, per-bin weight) from the training set's turn-magnitude
+        # histogram; see make_self_information_weights in scripts/train.py.
+        self.self_information_edges = None
+        self.self_information_bin_weights = None
+        if self_information_weights is not None:
+            edges, bin_weights = self_information_weights
+            self.self_information_edges = torch.as_tensor(
+                edges, dtype=torch.float32, device=device
+            )
+            self.self_information_bin_weights = torch.as_tensor(
+                bin_weights, dtype=torch.float32, device=device
+            )
         if ema_model is None:
             raise ValueError("NoMaDTrainer requires an EMA model")
         self.ema_model = ema_model
@@ -65,11 +78,27 @@ class NoMaDTrainer:
         os.makedirs(run_dir, exist_ok=True)
         os.makedirs(weights_dir, exist_ok=True)
 
-    def _sample_loss_weights(self, cmd_dir):
-        if self.cmd_dir_loss_weights is None:
-            return None
-        labels = cmd_dir_labels(cmd_dir)
-        return self.cmd_dir_loss_weights[labels]
+    def _sample_loss_weights(self, data):
+        """Per-sample loss weights, or None when neither scheme is on.
+
+        Both may be enabled at once, in which case they multiply: the
+        command balances how often each direction is asked for, the
+        self-information term balances how hard the sample actually turns.
+        """
+        weights = None
+        if self.cmd_dir_loss_weights is not None:
+            weights = self.cmd_dir_loss_weights[cmd_dir_labels(data["cmd_dir"])]
+        if self.self_information_bin_weights is not None:
+            angles = data["turn_angle"]
+            # bucketize with the interior edges only; the outer two are the
+            # data's own min and max, so anything at or beyond them belongs
+            # to the first or last bin rather than to one past the end.
+            bins = torch.bucketize(
+                angles, self.self_information_edges[1:-1], right=False
+            )
+            information = self.self_information_bin_weights[bins]
+            weights = information if weights is None else weights * information
+        return weights
 
     def _prepare(self, batch):
         observation = batch["observation"]
@@ -79,6 +108,9 @@ class NoMaDTrainer:
             "observation": observation.to(self.device),
             "actions": batch["actions"].to(self.device),
             "cmd_dir": batch["cmd_dir"].to(self.device),
+            "turn_angle": batch["turn_angle"].to(self.device)
+            if "turn_angle" in batch
+            else None,
         }
 
     def _obs_cond(self, data):
@@ -130,7 +162,7 @@ class NoMaDTrainer:
                 per_sample_loss = F.mse_loss(
                     noise_pred, noise, reduction="none"
                 ).mean(dim=tuple(range(1, noise_pred.ndim)))
-                sample_weights = self._sample_loss_weights(data["cmd_dir"])
+                sample_weights = self._sample_loss_weights(data)
                 if sample_weights is None:
                     loss = per_sample_loss.mean()
                 else:

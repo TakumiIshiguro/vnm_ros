@@ -1,0 +1,60 @@
+runtime:
+  rate: 4.0
+  stale_timeout_seconds: 1.0
+  robot_frame: base_footprint
+
+map:
+  width_m: 3.0
+  height_m: 2.0
+  image_size: [640, 640]
+  grid_spacing_m: 0.5
+  obstacle_radius_pixels: 2
+
+avoidance:
+  require_obstacle_data: true
+  num_action_samples: 8
+  waypoint_index: 1
+  # Select the target-conditioned NoMaD trajectory before CARE adjustment.
+  # Supported values: mean, first, cmd_dir.
+  #
+  # cmd_dir picks the sample whose bearing is nearest the angle configured
+  # for the commanded direction below, and falls back to the mean for any
+  # direction left null. It is the default because commanded straight the
+  # model steers into side openings: at a_f[2376-2388], passing a right-hand
+  # opening, it reached -0.22 rad/s while its own teacher drove straight
+  # through. The samples there are not split between going straight and
+  # taking the opening -- all eight shift right together -- but they do
+  # spread, and the one nearest zero stays close to the teacher.
+  base_action_strategy: mean
+  # Bearing, in degrees and left positive, that cmd_dir aims each command
+  # at. null means that direction has no target and is averaged instead.
+  #
+  # Only straight has a well-defined one. Measured on the teacher
+  # trajectories of a_f+g+h with the same bearing definition the selector
+  # uses, a straight command's own bearing is tight and centred on zero
+  # (median -0.03 deg, IQR 1.43). Left and right are four times wider
+  # (IQR 6.53 / 5.38) and cross zero between their 5th and 95th percentiles,
+  # because the angle a turn should take depends on where in the turn the
+  # robot is: about zero on approach, near 10 deg at the apex, zero again on
+  # exit. A fixed target would start those turns early and then cap them, so
+  # they stay null. Set one to a number to select on it anyway.
+  cmd_dir_target_theta_deg:
+    straight: 0.0
+    left: null
+    right: null
+  maximum_forward_range_m: 1.0
+  # Narrowest corridor has walls about 0.50 m from the centerline.
+  # Use the 0.30 m robot half-width plus a 0.10 m safety margin.
+  path_influence_radius_m: 0.40
+  # UniDepth now receives the Gazebo fisheye model, so do not pull points closer.
+  depth_offset_m: 0.0
+  # Cap the inverse-distance force from isolated near-wall points.
+  minimum_force_distance_m: 0.10
+  # Ignore small residual forces when left/right wall repulsion is balanced.
+  force_balance_ratio_threshold: 0.30
+  theta_clip_degrees: 45.0
+  safe_fov_threshold_degrees: 30.0
+
+target_direction:
+  # Stop when /cmd_dir_intersection is missing or no longer being published.
+  stale_timeout_seconds: 0.5

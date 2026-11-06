@@ -18,6 +18,8 @@ def action_candidates_msg(
     waypoint_index: int,
     avoidance_active: bool = False,
     target_direction: int = -1,
+    straight_limit_active: bool = False,
+    angular_deadband_active: bool = False,
 ) -> Float32MultiArray:
     msg = Float32MultiArray()
     sample_count = len(actions)
@@ -39,6 +41,8 @@ def action_candidates_msg(
     msg.data = header + values + [
         float(bool(avoidance_active)),
         float(target_direction),
+        float(bool(straight_limit_active)),
+        float(bool(angular_deadband_active)),
     ]
     return msg
 

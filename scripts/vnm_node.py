@@ -13,7 +13,11 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
 from visualization_msgs.msg import Marker
 
-from vnm_ros.care import CareRepulsiveAdjuster, select_base_action
+from vnm_ros.care import (
+    CareRepulsiveAdjuster,
+    select_base_action,
+    select_base_action_by_cmd_dir,
+)
 from vnm_ros.control.cmd_dir_action_selector import CmdDirActionSelector
 from vnm_ros.control.waypoint_controller import WaypointController
 from vnm_ros.models.vnm_model import VNMModel
@@ -190,7 +194,16 @@ def main():
             close_threshold=float(topomap_cfg["close_threshold"]),
         )
 
-    image_sub = ImageContextSubscriber(topics["image_topic"], model.context_size)
+    # Frames between context images and between predicted waypoints, for a
+    # model trained with waypoint_spacing wider than the distance driven in
+    # one model_rate step. 1 feeds consecutive frames.
+    context_stride = int(robot.get("context_stride", 1))
+    image_sub = ImageContextSubscriber(
+        topics["image_topic"],
+        model.context_size,
+        context_stride=context_stride,
+    )
+    waypoint_rate = float(robot["model_rate"]) / context_stride
     action_selector = (
         CmdDirActionSelector(
             theta_threshold_deg=float(
@@ -268,7 +281,11 @@ def main():
         dt=1.0 / float(robot["model_rate"]),
         max_v=float(robot["max_v"]),
         max_w=float(robot["max_w"]),
+        angular_deadband=float(robot.get("angular_deadband", 0.0)),
+        straight_max_w=float(robot.get("straight_max_w", 0.0)),
     )
+    # Zero keeps the single-waypoint controller.
+    pure_pursuit_lookahead_m = float(robot.get("pure_pursuit_lookahead_m", 0.0))
 
     def reset_context_callback(msg):
         if not msg.data:
@@ -374,19 +391,27 @@ def main():
                     base_action_strategy = care_cfg["avoidance"][
                         "base_action_strategy"
                     ]
-                    base_action = select_base_action(
-                        actions,
-                        base_action_strategy,
-                    )
+                    if base_action_strategy == "cmd_dir":
+                        base_action, base_sample = select_base_action_by_cmd_dir(
+                            actions,
+                            cmd_dir,
+                            care_cfg["avoidance"]["cmd_dir_target_theta_deg"],
+                        )
+                    else:
+                        base_action = select_base_action(
+                            actions,
+                            base_action_strategy,
+                        )
+                        base_sample = 0 if base_action_strategy == "first" else -1
                     actions = model.scale_waypoint(
                         actions,
                         max_v=float(robot["max_v"]),
-                        model_rate=float(robot["model_rate"]),
+                        model_rate=waypoint_rate,
                     )
                     base_action = model.scale_waypoint(
                         base_action,
                         max_v=float(robot["max_v"]),
-                        model_rate=float(robot["model_rate"]),
+                        model_rate=waypoint_rate,
                     )
                     obstacle_points = obstacle_subscriber.latest(
                         care_cfg["runtime"]["stale_timeout_seconds"]
@@ -417,14 +442,16 @@ def main():
                     )
                     waypoint = selected_action[selected_waypoint_index]
                     display_actions = actions
-                    if base_action_strategy == "mean":
+                    if base_sample < 0:
+                        # A synthesised mean is not one of the samples, so it
+                        # has to be appended before it can be pointed at.
                         display_actions = np.concatenate(
                             (display_actions, base_action[np.newaxis, :, :]),
                             axis=0,
                         )
                         display_selected_sample = display_actions.shape[0] - 1
                     else:
-                        display_selected_sample = 0
+                        display_selected_sample = base_sample
                     action_was_adjusted = (
                         care_adjustment.stopped
                         or abs(care_adjustment.rotation_angle) > 1e-8
@@ -450,6 +477,7 @@ def main():
                     info(
                         f"target_dir={target_name} mode=care "
                         f"base_action={base_action_strategy} "
+                        f"base_sample={base_sample} "
                         f"selected_sample={display_selected_sample} "
                         f"rotation={np.rad2deg(care_adjustment.rotation_angle):.1f}deg "
                         f"balance_ratio={care_adjustment.force_balance_ratio:.3f} "
@@ -481,12 +509,12 @@ def main():
                     actions = model.scale_waypoint(
                         actions,
                         max_v=float(robot["max_v"]),
-                        model_rate=float(robot["model_rate"]),
+                        model_rate=waypoint_rate,
                     )
                     selected_action = model.scale_waypoint(
                         selected_action,
                         max_v=float(robot["max_v"]),
-                        model_rate=float(robot["model_rate"]),
+                        model_rate=waypoint_rate,
                     )
                     selected_waypoint_index = min(
                         waypoint_index,
@@ -509,15 +537,6 @@ def main():
                         f"score={action_selector.selected_score} "
                         f"waypoint=({float(waypoint[0]):.3f},{float(waypoint[1]):.3f})"
                     )
-                action_candidates_pub.publish(
-                    action_candidates_msg(
-                        display_actions,
-                        selected_sample=display_selected_sample,
-                        waypoint_index=selected_waypoint_index,
-                        avoidance_active=care_avoidance_active,
-                        target_direction=cmd_dir_index(cmd_dir),
-                    )
-                )
             else:
                 start, end = subgoal_selector.window_bounds()
                 distances, waypoints = model.predict(
@@ -533,7 +552,7 @@ def main():
                 waypoint = model.scale_waypoint(
                     waypoint,
                     max_v=float(robot["max_v"]),
-                    model_rate=float(robot["model_rate"]),
+                    model_rate=waypoint_rate,
                 )
 
             if robot.get("publish_waypoint", True):
@@ -544,9 +563,43 @@ def main():
                     pil_to_msg(topo.images[subgoal_selector.selected_node])
                 )
 
-            v, w = controller.command(waypoint)
+            # CARE steering needs the full angular range even when the
+            # scenario still requests straight travel.
+            apply_straight_limit = (
+                cmd_dir_name(cmd_dir) == "straight" and not care_avoidance_active
+            )
+            if select_by_care and pure_pursuit_lookahead_m > 0.0:
+                # The BEV overlay marks this index as the point being chased.
+                selected_waypoint_index = controller.lookahead_index(
+                    selected_action, pure_pursuit_lookahead_m
+                )
+                v, w = controller.pure_pursuit(
+                    selected_action, pure_pursuit_lookahead_m
+                )
+            else:
+                v, w = controller.command(
+                    waypoint, straight=apply_straight_limit
+                )
             if select_by_care and care_rotate_in_place:
                 v = 0.0
+            if navigation_mode == "explore":
+                straight_max_w = float(robot.get("straight_max_w", 0.0))
+                straight_limit_active = (
+                    apply_straight_limit
+                    and straight_max_w > 0.0
+                    and np.isclose(abs(w), straight_max_w, rtol=1e-7, atol=1e-9)
+                )
+                action_candidates_pub.publish(
+                    action_candidates_msg(
+                        display_actions,
+                        selected_sample=display_selected_sample,
+                        waypoint_index=selected_waypoint_index,
+                        avoidance_active=care_avoidance_active,
+                        target_direction=cmd_dir_index(cmd_dir),
+                        straight_limit_active=straight_limit_active,
+                        angular_deadband_active=controller.angular_deadband_active,
+                    )
+                )
             cmd_debug = Twist()
             cmd_debug.linear.x = v
             cmd_debug.angular.z = w

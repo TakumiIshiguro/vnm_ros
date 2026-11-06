@@ -31,6 +31,34 @@ class WaypointControllerTest(unittest.TestCase):
         self.assertAlmostEqual(v, 0.0)
         self.assertAlmostEqual(w, (np.pi / 2.0) / 0.2)
 
+    def test_small_turn_rates_are_zeroed_by_the_deadband(self):
+        controller = WaypointController(
+            dt=0.25, max_v=0.25, max_w=0.4, angular_deadband=0.05
+        )
+        # ~0.5 deg of bearing, the model's straight-ahead bias: 0.035 rad/s.
+        v, w = controller.command([1.0, np.tan(np.radians(0.5))])
+
+        self.assertEqual(w, 0.0)
+        self.assertGreater(v, 0.0)
+
+    def test_the_deadband_leaves_real_turns_alone(self):
+        controller = WaypointController(
+            dt=0.25, max_v=0.25, max_w=0.4, angular_deadband=0.05
+        )
+        v, w = controller.command([1.0, np.tan(np.radians(12.0))])
+
+        self.assertAlmostEqual(w, 0.4)
+
+    def test_the_deadband_is_off_by_default(self):
+        controller = WaypointController(dt=0.25, max_v=0.25, max_w=0.4)
+        _, w = controller.command([1.0, np.tan(np.radians(0.5))])
+
+        self.assertGreater(abs(w), 0.0)
+
+    def test_a_negative_deadband_is_rejected(self):
+        with self.assertRaises(ValueError):
+            WaypointController(dt=0.25, max_v=0.25, max_w=0.4, angular_deadband=-0.1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,9 +9,20 @@ from vnm_ros.utils.image_utils import msg_to_pil
 
 
 class ImageContextSubscriber:
-    def __init__(self, topic: str, context_size: int, queue_size: int = 1):
+    def __init__(
+        self,
+        topic: str,
+        context_size: int,
+        queue_size: int = 1,
+        context_stride: int = 1,
+    ):
+        if context_stride < 1:
+            raise ValueError("context_stride must be >= 1")
         self._context_size = context_size
-        self._images = deque(maxlen=context_size + 1)
+        self._context_stride = context_stride
+        # The newest frame plus context_size older ones, context_stride apart.
+        self._required_images = context_size * context_stride + 1
+        self._images = deque(maxlen=self._required_images)
         self._lock = Lock()
         self._latest_msg = None
         self._received_count = 0
@@ -41,11 +52,13 @@ class ImageContextSubscriber:
 
     def ready(self) -> bool:
         with self._lock:
-            return len(self._images) > self._context_size
+            return len(self._images) >= self._required_images
 
     def context(self) -> List:
         with self._lock:
-            return list(self._images)
+            images = list(self._images)
+        # Count back from the newest frame, which is always included.
+        return images[(len(images) - 1) % self._context_stride :: self._context_stride]
 
     def reset(self) -> None:
         with self._lock:

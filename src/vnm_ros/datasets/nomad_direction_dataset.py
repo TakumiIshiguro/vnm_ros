@@ -1,3 +1,4 @@
+import os
 from typing import Optional, Sequence
 
 import numpy as np
@@ -27,6 +28,8 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         center_crop: bool = False,
         trajectory_names: Optional[Sequence[str]] = None,
         augmentation: Optional[dict] = None,
+        exclude_straight_passage_classes: Optional[Sequence[str]] = None,
+        cmd_dir_label_mode: str = "majority",
     ):
         self.image_size = tuple(image_size)
         self.context_size = int(context_size)
@@ -49,8 +52,34 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         )
         self.skipped_mixed_cmd_dir_samples = 0
         self.skipped_tied_cmd_dir_samples = 0
+        # Drop straight-commanded samples whose passage class is in this set.
+        # Straight is three quarters plain corridor, so at a junction the
+        # straight examples are averaged in with thousands of featureless
+        # frames while the turn examples are not, and the command that wins
+        # there is the turn. Removing the plain-corridor ones leaves the
+        # straight command represented by the junctions it has to be
+        # distinguished at; plain corridor is then left to the pretrained
+        # weights, which already follow one.
+        self.exclude_straight_passage_classes = (
+            set(exclude_straight_passage_classes or ())
+        )
+        self.excluded_straight_samples = 0
         self.relabelled_mixed_cmd_dir_samples = 0
+        # "majority" labels a sample by the most common command in its action
+        # window. "current" labels it by the command at the current frame,
+        # which is all the model is told at run time, and drops windows that
+        # go on to a different turn command, since nothing in the input says
+        # that turn is coming. Long horizons need "current": the commands
+        # change 1.3-1.8 m before a turn, so a 2 m window often spans a change.
+        self.cmd_dir_label_mode = str(cmd_dir_label_mode)
+        if self.cmd_dir_label_mode not in ("majority", "current"):
+            raise ValueError(
+                "cmd_dir_label_mode must be 'majority' or 'current', "
+                f"got {cmd_dir_label_mode!r}"
+            )
+        self.excluded_future_turn_samples = 0
         super().__init__(data_dir, trajectory_names=trajectory_names)
+        self._passage_classes = {}
         self.samples = self._build_index()
 
     def _validate_trajectory(self, name: str, trajectory: dict, length: int):
@@ -69,22 +98,62 @@ class NoMaDDirectionDataset(TrajectoryDataset):
             length = len(trajectory["position"])
             for current in range(context_offset, length - action_offset):
                 cmd_dirs = self._sample_cmd_dirs(trajectory, current)
-                label = majority_cmd_dir_label(cmd_dirs)
-                if label is None:
-                    self.skipped_mixed_cmd_dir_samples += 1
-                    self.skipped_tied_cmd_dir_samples += 1
-                    continue
                 window_labels = np.argmax(cmd_dirs[:, :3], axis=1)
                 valid = np.sum(cmd_dirs[:, :3], axis=1) > 0.0
                 window_labels = np.where(valid, window_labels, 0)
+                if self.cmd_dir_label_mode == "current":
+                    label = int(window_labels[0])
+                    if np.any(
+                        (window_labels != label) & (window_labels != 0)
+                    ):
+                        self.excluded_future_turn_samples += 1
+                        continue
+                else:
+                    label = majority_cmd_dir_label(cmd_dirs)
+                    if label is None:
+                        self.skipped_mixed_cmd_dir_samples += 1
+                        self.skipped_tied_cmd_dir_samples += 1
+                        continue
                 if np.any(window_labels != window_labels[0]):
                     self.relabelled_mixed_cmd_dir_samples += 1
+                if label == 0 and self.exclude_straight_passage_classes:
+                    passage = self._passage_class(name, length)
+                    if (
+                        passage is not None
+                        and passage[current] in self.exclude_straight_passage_classes
+                    ):
+                        self.excluded_straight_samples += 1
+                        continue
                 samples.append((name, current))
                 sample_labels.append(label)
         if not samples:
             raise ValueError("No trainable NoMaD samples; trajectories may be too short")
         self._sample_cmd_dir_labels = np.asarray(sample_labels, dtype=np.int64)
         return samples
+
+    def _passage_class(self, name: str, length: int):
+        """Per-frame passage class, from passage_class.npy beside traj_data.pkl.
+
+        Written by scripts/write_passage_classes.py. Absent means the
+        trajectory cannot be filtered, which is reported rather than
+        silently ignored.
+        """
+        if name in self._passage_classes:
+            return self._passage_classes[name]
+        path = os.path.join(self.data_dir, name, "passage_class.npy")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"{path}: exclude_straight_passage_classes needs per-frame "
+                "passage labels; run scripts/write_passage_classes.py"
+            )
+        classes = np.load(path, allow_pickle=True)
+        if len(classes) != length:
+            raise ValueError(
+                f"{path}: {len(classes)} labels for {length} frames"
+            )
+        classes = np.asarray([str(c) for c in classes], dtype=object)
+        self._passage_classes[name] = classes
+        return classes
 
     def sample_cmd_dir_labels(self) -> np.ndarray:
         return self._sample_cmd_dir_labels.copy()
@@ -113,6 +182,31 @@ class NoMaDDirectionDataset(TrajectoryDataset):
             deltas /= self.metric_waypoint_spacing * self.waypoint_spacing
         normalized = 2.0 * (deltas - self.action_min) / (self.action_max - self.action_min)
         return (normalized - 1.0).astype(np.float32)
+
+    def turn_angle_degrees(self, index: int) -> float:
+        """Bearing of the teacher trajectory's endpoint, in the robot frame.
+
+        The scalar the self-information weighting bins on. It stands in for
+        the angular velocity the method was written around: over a fixed
+        horizon the endpoint's bearing is how hard this sample turns. It is
+        taken from the local positions rather than from ``actions``, whose
+        per-component affine normalisation would distort the angle.
+        """
+        name, current = self.samples[index]
+        trajectory = self.trajectory(name)
+        indices = current + np.arange(self.len_traj_pred + 1) * self.waypoint_spacing
+        positions = trajectory["position"][indices]
+        local = to_local_coords(
+            positions, positions[0], float(trajectory["yaw"][current])
+        )
+        endpoint = local[-1]
+        return float(np.degrees(np.arctan2(endpoint[1], endpoint[0])))
+
+    def sample_turn_angles(self) -> np.ndarray:
+        return np.asarray(
+            [self.turn_angle_degrees(i) for i in range(len(self.samples))],
+            dtype=np.float32,
+        )
 
     def __getitem__(self, index):
         name, current = self.samples[index]
@@ -143,5 +237,8 @@ class NoMaDDirectionDataset(TrajectoryDataset):
         return {
             "observation": observations,
             "actions": torch.from_numpy(self._normalized_action_delta(name, current)),
+            "turn_angle": torch.tensor(
+                self.turn_angle_degrees(index), dtype=torch.float32
+            ),
             "cmd_dir": torch.from_numpy(cmd_dir),
         }

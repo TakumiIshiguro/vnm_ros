@@ -1,6 +1,10 @@
 """CARE obstacle-aware navigation and visualization utilities."""
 
-from .action_selection import BASE_ACTION_STRATEGIES, select_base_action
+from .action_selection import (
+    BASE_ACTION_STRATEGIES,
+    select_base_action,
+    select_base_action_by_cmd_dir,
+)
 from .bev_overlay import decode_action_candidates, render_care_bev
 from .repulsive_adjuster import CareAdjustment, CareRepulsiveAdjuster
 
@@ -11,4 +15,5 @@ __all__ = [
     "decode_action_candidates",
     "render_care_bev",
     "select_base_action",
+    "select_base_action_by_cmd_dir",
 ]

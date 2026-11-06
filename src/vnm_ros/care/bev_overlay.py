@@ -37,6 +37,12 @@ def decode_action_candidates(data: Sequence[float]) -> Optional[Dict]:
         "waypoint_index": max(0, min(waypoint_index, horizon - 1)),
         "actions": actions,
         "avoidance_active": bool(data[expected]) if len(data) > expected else False,
+        "straight_limit_active": (
+            bool(data[expected + 2]) if len(data) > expected + 2 else False
+        ),
+        "angular_deadband_active": (
+            bool(data[expected + 3]) if len(data) > expected + 3 else False
+        ),
         "target_direction": TARGET_DIRECTION_NAMES.get(
             target_direction,
             "none",
@@ -294,7 +300,11 @@ def render_care_bev(
         ]
         draw.line(selected_pixels, fill=(25, 25, 25), width=7)
         selected_color = (
-            (225, 70, 235)
+            (0, 200, 200)
+            if candidates.get("straight_limit_active", False)
+            else (60, 180, 75)
+            if candidates.get("angular_deadband_active", False)
+            else (225, 70, 235)
             if avoidance_active
             else (255, 211, 40)
         )

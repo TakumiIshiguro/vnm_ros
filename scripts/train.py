@@ -81,6 +81,10 @@ def make_nomad_dataset(config, model_cfg, dataset_type):
         normalize=bool(model_cfg.get("normalize", True)),
         center_crop=bool(model_cfg.get("image_center_crop", False)),
         augmentation=augmentation,
+        exclude_straight_passage_classes=dataset.get(
+            "exclude_straight_passage_classes"
+        ),
+        cmd_dir_label_mode=dataset.get("cmd_dir_label_mode", "majority"),
     )
 
 
@@ -111,6 +115,59 @@ def make_cmd_dir_loss_weights(dataset, training):
         "power": power,
     }
     return class_weights.astype(np.float32), info
+
+
+def make_self_information_weights(dataset, training):
+    """Bin the turn magnitude and weight each bin by its self-information.
+
+    Follows Imai et al., "Imitation of path-tracking behavior by end-to-end
+    learning of vision and action" (SICE SI 2025), which bins the teacher's
+    angular velocity and weights each sample's loss by -log p of its bin,
+    so that rare sharp turns are not averaged away by the straight driving
+    that dominates the data.
+
+    This is a strictly finer instrument than cmd_dir_loss_weighting, which
+    weights by the commanded direction alone. About half of the turn-labelled
+    samples barely turn at all -- the label covers the whole approach, while
+    the trajectory only bends through the middle of it -- so weighting by
+    label raises "labelled right but still going straight" exactly as much
+    as the genuine turn, which is what the model has to tell apart.
+    """
+    if not bool(training.get("self_information_weighting", False)):
+        return None, None
+    if not hasattr(dataset, "sample_turn_angles"):
+        raise ValueError(
+            "self_information_weighting requires a direction-conditioned dataset"
+        )
+    bins = int(training.get("self_information_bins", 5))
+    if bins < 2:
+        raise ValueError("self_information_bins must be at least 2")
+    angles = dataset.sample_turn_angles()
+    # Symmetric about zero rather than spanning the data's own min and max.
+    # Equal-width bins over [min, max] land off-centre whenever the course
+    # is not perfectly balanced -- on this dataset the central bin came out
+    # as [-1.95, +6.50], so samples aiming slightly right fell into the
+    # neighbouring bin at weight 2.29 while the matching slightly-left ones
+    # stayed in the centre at 0.34. That reintroduced the rightward bias
+    # the yaw-offset correction had just removed, at -0.91 deg against
+    # -0.07. Left and right have to be weighted alike, so the bins are
+    # placed symmetrically and the central one straddles straight ahead.
+    limit = float(np.abs(angles).max())
+    edges = np.linspace(-limit, limit, bins + 1)
+    indices = np.clip(np.digitize(angles, edges) - 1, 0, bins - 1)
+    counts = np.bincount(indices, minlength=bins).astype(np.float64)
+    probabilities = counts / float(len(angles))
+    # An empty bin would send its weight to infinity; it has no samples to
+    # apply it to, so park it at zero rather than propagate the infinity.
+    weights = np.where(probabilities > 0.0, -np.log(np.maximum(probabilities, 1e-12)), 0.0)
+    weights *= len(angles) / np.sum(weights[indices])
+    info = {
+        "bins": bins,
+        "edges": edges.tolist(),
+        "counts": counts.astype(int).tolist(),
+        "weights": weights.tolist(),
+    }
+    return (edges.astype(np.float32), weights.astype(np.float32)), info
 
 
 def dataset_name(data_dir, model_type=None):
@@ -435,6 +492,10 @@ def train_vint_direction(args, train_cfg, model_cfg):
     cmd_dir_loss_weights, cmd_dir_loss_weight_info = make_cmd_dir_loss_weights(
         train_dataset, training
     )
+    if bool(training.get("self_information_weighting", False)):
+        raise ValueError(
+            "self_information_weighting is implemented for the NoMaD trainer only"
+        )
     train_loader = DataLoader(
         train_dataset,
         shuffle=True,
@@ -617,6 +678,19 @@ def train_nomad_direction(args, train_cfg, model_cfg):
     cmd_dir_loss_weights, cmd_dir_loss_weight_info = make_cmd_dir_loss_weights(
         train_dataset, training
     )
+    self_information_weights, self_information_info = make_self_information_weights(
+        train_dataset, training
+    )
+    if self_information_info is not None:
+        edges = self_information_info["edges"]
+        print("self-information weighting on the teacher's endpoint bearing:")
+        for index, (count, weight) in enumerate(
+            zip(self_information_info["counts"], self_information_info["weights"])
+        ):
+            print(
+                f"  bin{index} [{edges[index]:+7.2f},{edges[index + 1]:+7.2f}] deg "
+                f"n={count:6d} weight={weight:5.2f}"
+            )
     train_loader = DataLoader(
         train_dataset,
         shuffle=True,
@@ -662,6 +736,7 @@ def train_nomad_direction(args, train_cfg, model_cfg):
         enable_tensorboard=bool(training.get("tensorboard", True)),
         frozen_modules=frozen_modules,
         cmd_dir_loss_weights=cmd_dir_loss_weights,
+        self_information_weights=self_information_weights,
         ema_model=ema_model,
     )
     print(
