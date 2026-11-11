@@ -1,6 +1,6 @@
 <launch>
-  <arg name="config_dir" default="$(find vnm_ros)/config"/>
-  <arg name="unidepth_config_file" default="$(find unidepth_ros)/config/unidepth.yaml"/>
+  <arg name="config_dir" default="$(find vnm_ros)/config/experiments/closedloop_pp_real1030_s4_L10_caresoft"/>
+  <arg name="unidepth_config_file" default="$(find unidepth_ros)/config/unidepth_real.yaml"/>
   <arg name="start_navigation" default="true"/>
   <arg name="start_depth_estimator" default="true"/>
   <!-- Target-directed CARE requires the direction-conditioned checkpoint from nomad.yaml. -->
